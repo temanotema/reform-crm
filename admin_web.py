@@ -20,6 +20,10 @@ from config import (
     YCLIENTS_COMPANY_ID, YCLIENTS_CLIENT_URL_TEMPLATE,
 )
 from templates import get_all_templates_for_ui
+try:
+    from version import __version__ as APP_VERSION
+except Exception:
+    APP_VERSION = ""
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -131,12 +135,13 @@ BASE = r"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<script>(function(){document.documentElement.setAttribute('data-theme',localStorage.getItem('crm-theme')||'light');})();</script>
+<script>(function(){document.documentElement.setAttribute('data-theme',localStorage.getItem('crm-theme')||'dark');})();</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{ title }} — {{ clinic }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.17.0/dist/tabler-icons.min.css">
 <style>
 :root,[data-theme="light"]{
   --accent:#3390ec;--accent-h:#2b7cd3;--accent-soft:#dceaf8;
@@ -151,20 +156,31 @@ BASE = r"""<!DOCTYPE html>
   --muted:var(--text-sec);
 }
 [data-theme="dark"]{
-  --accent:#6ab3f3;--accent-h:#5aa0e0;--accent-soft:#1a3a5c;
-  --bg:#0e1621;--card:#17212b;--sidebar-bg:#17212b;--border:#242f3d;
-  --text:#f5f5f5;--text-sec:#708499;--chat-bg:#0e1621;
-  --bubble-in:#182533;--bubble-out:#2b5278;--bubble-out-text:#fff;
-  --hover:#1e2c3a;--input-bg:#242f3d;--shadow:0 1px 2px rgba(0,0,0,.25);
-  --shadow-lg:0 8px 32px rgba(0,0,0,.45);--overlay:rgba(0,0,0,.6);
-  --scroll-thumb:#3d4f63;
+  --accent:#828a96;--accent-h:#9aa2ae;--accent-soft:rgba(255,255,255,.10);
+  --bg:radial-gradient(135% 135% at 14% 0%,#2b2e34 0%,#1c1e23 46%,#121317 100%);
+  --card:rgba(255,255,255,.05);--sidebar-bg:rgba(255,255,255,.04);--border:rgba(255,255,255,.10);
+  --text:#eceef2;--text-sec:#9aa1ab;--chat-bg:rgba(255,255,255,.015);
+  --bubble-in:rgba(255,255,255,.07);--bubble-out:rgba(255,255,255,.14);--bubble-out-text:#f3f5f8;
+  --bubble-in-border:rgba(255,255,255,.08);
+  --hover:rgba(255,255,255,.07);--input-bg:rgba(255,255,255,.05);--shadow:0 1px 2px rgba(0,0,0,.3);
+  --shadow-lg:0 12px 40px rgba(0,0,0,.5);--overlay:rgba(0,0,0,.55);
+  --scroll-thumb:rgba(255,255,255,.16);
+  --green:#8fb89a;--red:#cf8d8d;--orange:#cdb98a;
   --pink:var(--accent);--pink-d:var(--accent-h);--pink-l:var(--accent-soft);--pink-ll:var(--hover);
   --muted:var(--text-sec);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);
-  font-size:14px;transition:background .3s,color .3s}
+body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);background-attachment:fixed;
+  color:var(--text);font-size:14px;transition:background .3s,color .3s}
+/* ── Liquid glass: размытие полупрозрачных панелей (тёмная тема) ── */
+[data-theme="dark"] .sidebar,[data-theme="dark"] .client-list,[data-theme="dark"] .chat-hdr,
+[data-theme="dark"] .chat-compose,[data-theme="dark"] .tbl-wrap,[data-theme="dark"] .modal-box,
+[data-theme="dark"] .bc-card,[data-theme="dark"] .bt-card,[data-theme="dark"] .mob-bar,
+[data-theme="dark"] .hamburger,[data-theme="dark"] .toast,[data-theme="dark"] .push-card,
+[data-theme="dark"] .chat-layout{backdrop-filter:blur(18px) saturate(130%);-webkit-backdrop-filter:blur(18px) saturate(130%)}
+.nav a i.ti,.mob-bar a i.ti{font-size:18px;width:20px;text-align:center;flex-shrink:0}
+.sidebar .logo i.ti{font-size:20px}
 
 /* ── Sidebar ── */
 .sidebar{position:fixed;top:0;left:0;width:var(--sidebar);height:100vh;
@@ -327,7 +343,7 @@ input[type=color]{padding:3px 6px;height:36px;width:52px;cursor:pointer}
   border-radius:8px;text-decoration:none;color:inherit;margin-bottom:4px;transition:background .2s}
 [data-theme="dark"] .msg-file{background:rgba(255,255,255,.06)}
 .msg-file:hover{background:rgba(51,144,236,.12)}
-.msg-file .file-icon{font-size:28px;line-height:1}
+.msg-file .file-icon{font-size:20px;line-height:1;color:var(--text-sec);flex-shrink:0}
 .msg-file .file-name{font-size:13px;font-weight:500;word-break:break-all}
 .chat-compose{border-top:1px solid var(--border);background:var(--card);padding:8px 12px 12px}
 .attach-preview{display:none;flex-wrap:wrap;gap:8px;padding:8px 4px 4px}
@@ -361,12 +377,15 @@ tr:hover td{background:var(--hover)}
 
 /* ── Toast ── */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--card);color:var(--text);
-  padding:12px 20px;border-radius:12px;z-index:9999;font-size:13px;border:1px solid var(--border);
-  box-shadow:var(--shadow-lg);opacity:0;transform:translateY(12px);transition:all .3s ease;
-  pointer-events:none;max-width:calc(100vw - 48px)}
+  padding:12px 18px;border-radius:12px;z-index:9999;font-size:13px;border:1px solid var(--border);
+  border-left:3px solid transparent;box-shadow:var(--shadow-lg);opacity:0;transform:translateY(12px);
+  transition:all .3s ease;pointer-events:none;max-width:calc(100vw - 48px);
+  display:flex;align-items:center;gap:8px}
 .toast.show{opacity:1;transform:translateY(0)}
-.toast.ok{border-color:var(--green);background:rgba(79,174,78,.12)}
-.toast.err{border-color:var(--red);background:rgba(229,57,53,.1)}
+.toast.ok{border-left-color:var(--green);background:rgba(79,174,78,.10)}
+.toast.err{border-left-color:var(--red);background:rgba(229,57,53,.08)}
+[data-theme="dark"] .toast.ok{background:rgba(143,184,154,.06);border-color:rgba(255,255,255,.08);border-left-color:var(--green)}
+[data-theme="dark"] .toast.err{background:rgba(207,141,141,.06);border-color:rgba(255,255,255,.08);border-left-color:var(--red)}
 
 /* ── Всплывающие пуш-уведомления (на любой странице) ── */
 .push-stack{position:fixed;left:14px;bottom:90px;z-index:6000;display:flex;flex-direction:column;gap:8px;
@@ -409,38 +428,43 @@ tr:hover td{background:var(--hover)}
 @media(min-width:768px){
   .back-btn{display:none!important}
 }
+/* ── Dark glass refinements ── */
+[data-theme="dark"] .ci.active{box-shadow:inset 0 0 0 1px rgba(255,255,255,.10)}
+[data-theme="dark"] .modal-box{border:1px solid rgba(255,255,255,.13)}
+[data-theme="dark"] .push-card{border-color:rgba(255,255,255,.10);border-left-color:var(--accent)}
+[data-theme="dark"] .msg.in{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 </style>
 </head>
 <body>
 {% if session.get('admin') %}
 <div class="sidebar-overlay" id="sideOverlay" onclick="closeSidebar()"></div>
-<button class="hamburger" onclick="toggleSidebar()">☰</button>
+<button class="hamburger" onclick="toggleSidebar()"><i class="ti ti-menu-2"></i></button>
 <div class="sidebar" id="sidebar">
-  <div class="logo">💆 {{ clinic }}</div>
+  <div class="logo"><i class="ti ti-diamond"></i> {{ clinic }}</div>
   <nav class="nav">
-    <a href="/chats"    class="{% if active=='chats'    %}active{% endif %}">💬 Чаты <span class="nav-unread" style="display:none"></span></a>
-    <a href="/clients"  class="{% if active=='clients'  %}active{% endif %}">👥 Клиенты</a>
-    <a href="/broadcast" class="{% if active=='broadcast' %}active{% endif %}">📢 Рассылка</a>
-    <a href="/templates" class="{% if active=='templates' %}active{% endif %}">📝 Шаблоны</a>
-    <a href="/chat_templates" class="{% if active=='chat_templates' %}active{% endif %}">⚡ Быстрые ответы</a>
+    <a href="/chats"    class="{% if active=='chats'    %}active{% endif %}"><i class="ti ti-message-circle"></i> Чаты <span class="nav-unread" style="display:none"></span></a>
+    <a href="/clients"  class="{% if active=='clients'  %}active{% endif %}"><i class="ti ti-users"></i> Клиенты</a>
+    <a href="/broadcast" class="{% if active=='broadcast' %}active{% endif %}"><i class="ti ti-speakerphone"></i> Рассылка</a>
+    <a href="/templates" class="{% if active=='templates' %}active{% endif %}"><i class="ti ti-file-text"></i> Шаблоны</a>
+    <a href="/chat_templates" class="{% if active=='chat_templates' %}active{% endif %}"><i class="ti ti-bolt"></i> Быстрые ответы</a>
   </nav>
   <div class="sidebar-foot">
     <button class="theme-btn" id="updateBtn" onclick="crmApplyUpdate()" style="display:none;color:var(--green)">
-      <span>⬆️</span><span id="updateLabel">Обновить</span>
+      <i class="ti ti-arrow-up-circle"></i><span id="updateLabel">Обновить</span>
     </button>
     <button class="theme-btn" id="themeToggle" onclick="toggleTheme()">
-      <span id="themeIcon">🌙</span><span id="themeLabel">Тёмная тема</span>
+      <i class="ti ti-moon" id="themeIcon"></i><span id="themeLabel">Тёмная тема</span>
     </button>
-    <a href="/logout">🚪 Выйти</a>
-    <div id="appVersion" style="font-size:10px;color:var(--text-sec);padding:2px 10px"></div>
+    <a href="/logout"><i class="ti ti-logout"></i> Выйти</a>
+    <div id="appVersion" style="font-size:10px;color:var(--text-sec);padding:2px 10px">{% if app_version %}версия {{ app_version }}{% endif %}</div>
   </div>
 </div>
 <nav class="mob-bar">
-  <a href="/chats"    class="{% if active=='chats'    %}active{% endif %}" style="position:relative"><span class="icon">💬</span>Чаты <span class="nav-unread" style="display:none"></span></a>
-  <a href="/clients"  class="{% if active=='clients'  %}active{% endif %}"><span class="icon">👥</span>Клиенты</a>
-  <a href="/broadcast" class="{% if active=='broadcast' %}active{% endif %}"><span class="icon">📢</span>Рассылка</a>
-  <a href="/templates" class="{% if active=='templates' %}active{% endif %}"><span class="icon">📝</span>Шаблоны</a>
-  <a href="/chat_templates" class="{% if active=='chat_templates' %}active{% endif %}"><span class="icon">⚡</span>Быстрые</a>
+  <a href="/chats"    class="{% if active=='chats'    %}active{% endif %}" style="position:relative"><span class="icon"><i class="ti ti-message-circle"></i></span>Чаты <span class="nav-unread" style="display:none"></span></a>
+  <a href="/clients"  class="{% if active=='clients'  %}active{% endif %}"><span class="icon"><i class="ti ti-users"></i></span>Клиенты</a>
+  <a href="/broadcast" class="{% if active=='broadcast' %}active{% endif %}"><span class="icon"><i class="ti ti-speakerphone"></i></span>Рассылка</a>
+  <a href="/templates" class="{% if active=='templates' %}active{% endif %}"><span class="icon"><i class="ti ti-file-text"></i></span>Шаблоны</a>
+  <a href="/chat_templates" class="{% if active=='chat_templates' %}active{% endif %}"><span class="icon"><i class="ti ti-bolt"></i></span>Быстрые</a>
 </nav>
 <div class="main">{{ body|safe }}</div>
 {% else %}
@@ -454,17 +478,20 @@ function applyTheme(theme){
   localStorage.setItem('crm-theme', theme);
   var icon = document.getElementById('themeIcon');
   var label = document.getElementById('themeLabel');
-  if(icon) icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+  if(icon) icon.className = theme === 'dark' ? 'ti ti-sun' : 'ti ti-moon';
   if(label) label.textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
 }
 function toggleTheme(){
-  var cur = document.documentElement.getAttribute('data-theme') || 'light';
+  var cur = document.documentElement.getAttribute('data-theme') || 'dark';
   applyTheme(cur === 'dark' ? 'light' : 'dark');
 }
 applyTheme(localStorage.getItem('crm-theme') || 'light');
 function showToast(msg, type){
   var t = document.getElementById('toast');
-  t.textContent = msg;
+  var icon = type === 'ok'  ? '<i class="ti ti-circle-check" style="font-size:16px;flex-shrink:0"></i>'
+           : type === 'err' ? '<i class="ti ti-circle-x"     style="font-size:16px;flex-shrink:0"></i>'
+           : '';
+  t.innerHTML = icon + '<span>' + esc(msg) + '</span>';
   t.className = 'toast show ' + (type || '');
   setTimeout(function(){ t.className = 'toast'; }, 3200);
 }
@@ -493,7 +520,7 @@ function renderMsgMedia(m){
   }
   var name = m.media_filename || 'Файл';
   return '<a class="msg-file" href="'+url+'" target="_blank" download>' +
-    '<span class="file-icon">📎</span><span class="file-name">'+esc(name)+'</span></a>';
+    '<i class="ti ti-paperclip file-icon"></i><span class="file-name">'+esc(name)+'</span></a>';
 }
 function renderMsg(m, animate){
   var cls = m.direction === 'system' ? 'system' : m.direction;
@@ -550,7 +577,7 @@ function crmNotify(p){
 function crmPush(p){
   var stack=document.getElementById('pushStack'); if(!stack) return;
   var card=document.createElement('div'); card.className='push-card';
-  card.innerHTML='<div class="pf">💬 '+esc((p&&p.sender)||'Клиент')+'</div>'+
+  card.innerHTML='<div class="pf"><i class="ti ti-message-circle" style="font-size:13px;margin-right:5px;opacity:.65"></i>'+esc((p&&p.sender)||'Клиент')+'</div>'+
                  '<div class="pt">'+esc((p&&p.text)||'Новое сообщение')+'</div>';
   card.onclick=function(){ if(p&&p.client_id) location.href='/chats/'+p.client_id; };
   stack.appendChild(card);
@@ -596,8 +623,6 @@ crmRealtime();
 function crmCheckUpdate(){
   if(!CRM_AUTHED) return;
   fetch('/api/update/check').then(function(r){return r.json();}).then(function(d){
-    var ver=document.getElementById('appVersion');
-    if(ver && d && d.current) ver.textContent='версия '+d.current;
     if(d && d.available){
       var b=document.getElementById('updateBtn'), l=document.getElementById('updateLabel');
       if(l) l.textContent='Обновить до v'+d.latest;
@@ -621,6 +646,7 @@ crmCheckUpdate();
 
 def render(tpl, **ctx):
     ctx.setdefault("clinic", CLINIC_NAME)
+    ctx.setdefault("app_version", APP_VERSION)
     ctx["display_name"] = db.client_display_name
     body = render_template_string(tpl, **ctx)
     html = render_template_string(BASE, body=body, **ctx)
@@ -681,11 +707,11 @@ CHATS_TPL = """
   <!-- Список клиентов -->
   <div class="client-list" id="clientList">
     <div class="client-list-hdr" style="display:flex;align-items:center;justify-content:space-between">
-      <span>💬 Диалоги</span>
+      <span><i class="ti ti-message-circle"></i> Диалоги</span>
       {% if total_unread > 0 %}<span class="unread">{{total_unread}}</span>{% endif %}
     </div>
     <div class="client-search">
-      <input id="srch" placeholder="🔍 Поиск..." oninput="filterClients(this.value)">
+      <input id="srch" placeholder="Поиск..." oninput="filterClients(this.value)">
     </div>
     <div class="client-items" id="clist">
       {% for c in clients %}
@@ -711,7 +737,7 @@ CHATS_TPL = """
   <div class="chat-win {% if not active_client %}mob-hidden{% endif %}" id="chatWin">
     <div id="chatPanel" style="display:{% if active_client %}flex{% else %}none{% endif %};flex:1;flex-direction:column;min-height:0;overflow:hidden">
       <div class="chat-hdr">
-        <button class="btn btn-ghost back-btn" onclick="backToList()" style="padding:6px 10px;flex-shrink:0">← Назад</button>
+        <button class="btn btn-ghost back-btn" onclick="backToList()" style="padding:6px 10px;flex-shrink:0"><i class="ti ti-arrow-left"></i> Назад</button>
         <div class="av" id="chatAv" style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-h));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">
           {% if active_client %}{{(active_client.first_name or active_client.last_name or '?')[0]|upper}}{% endif %}
         </div>
@@ -730,7 +756,7 @@ CHATS_TPL = """
             <div class="msg-media"><video src="/api/media/{{m.id}}" controls preload="metadata"></video></div>
             {% elif m.media_type == 'document' %}
             <a class="msg-file" href="/api/media/{{m.id}}" target="_blank" download>
-              <span class="file-icon">📎</span>
+              <i class="ti ti-paperclip file-icon"></i>
               <span class="file-name">{{ m.media_filename or 'Файл' }}</span>
             </a>
             {% endif %}
@@ -878,7 +904,7 @@ function updateAttachPreview(){
     } else {
       var thumb = document.createElement('div');
       thumb.className = 'file-thumb';
-      thumb.textContent = '📎';
+      thumb.innerHTML = '<i class="ti ti-paperclip" style="font-size:26px"></i>';
       item.appendChild(thumb);
     }
     var rm = document.createElement('button');
@@ -933,7 +959,7 @@ async function sendReply(){
       updateAttachPreview();
       await syncMsgs(true);
       syncDialogs();
-      if(result.warning) showToast('⚠️ ' + result.warning, '');
+      if(result.warning) showToast(result.warning, '');
     } else {
       showToast('Ошибка: ' + (result && result.error || 'неизвестная'), 'err');
     }
@@ -1145,9 +1171,9 @@ def chats(client_id=None):
 CLIENTS_TPL = """
 <div class="scroll-page">
   <div class="page-hdr">
-    <h2>👥 Клиенты <span style="font-size:13px;color:var(--muted);font-weight:400">({{clients|length}})</span></h2>
+    <h2><i class="ti ti-users"></i> Клиенты <span style="font-size:13px;color:var(--muted);font-weight:400">({{clients|length}})</span></h2>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-ghost" onclick="openModal('catModal')" style="font-size:12px">🏷 Категории</button>
+      <button class="btn btn-ghost" onclick="openModal('catModal')" style="font-size:12px"><i class="ti ti-tag"></i> Категории</button>
     </div>
   </div>
 
@@ -1195,9 +1221,9 @@ CLIENTS_TPL = """
         <td style="color:var(--muted);font-size:12px;white-space:nowrap">{{c.created_at.strftime('%d.%m.%Y') if c.created_at else '—'}}</td>
         <td>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn-sm" onclick="editClient({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}','{{(c.reg_last_name or c.last_name)|e}}','{{(c.reg_patronymic or c.patronymic)|e}}','{{c.phone|e}}','{{c.notes|e}}')">✏️</button>
-            <button class="btn-sm" onclick="editCategories({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}')">🏷</button>
-            <a href="/chats/{{c.id}}" class="btn-sm">💬</a>
+            <button class="btn-sm" onclick="editClient({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}','{{(c.reg_last_name or c.last_name)|e}}','{{(c.reg_patronymic or c.patronymic)|e}}','{{c.phone|e}}','{{c.notes|e}}')"><i class="ti ti-pencil"></i></button>
+            <button class="btn-sm" onclick="editCategories({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}')"><i class="ti ti-tag"></i></button>
+            <a href="/chats/{{c.id}}" class="btn-sm"><i class="ti ti-message"></i></a>
           </div>
         </td>
       </tr>
@@ -1222,14 +1248,14 @@ CLIENTS_TPL = """
 <!-- Модал управления категориями -->
 <div id="catModal" class="modal">
   <div class="modal-box">
-    <div class="modal-head"><h3>🏷 Категории</h3><button class="modal-close" onclick="closeModal('catModal')">×</button></div>
+    <div class="modal-head"><h3><i class="ti ti-tag"></i> Категории</h3><button class="modal-close" onclick="closeModal('catModal')">×</button></div>
     <div id="catList">
       {% for cat in categories %}
       <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)" id="catRow{{cat.id}}">
         <span class="tag" style="background:{{cat.color}}">{{cat.name}}</span>
         <span style="flex:1;color:var(--muted);font-size:12px">{{cat.color}}</span>
         {% if cat.protected %}
-        <span style="color:var(--muted);font-size:14px" title="Системная категория — удалить нельзя, можно ставить вручную">🔒</span>
+        <i class="ti ti-lock" style="color:var(--muted);font-size:14px" title="Системная категория — удалить нельзя, можно ставить вручную"></i>
         {% else %}
         <button class="btn-sm btn-danger" onclick="deleteCat({{cat.id}})">✕</button>
         {% endif %}
@@ -1245,7 +1271,7 @@ CLIENTS_TPL = """
           <span style="font-size:12px;color:var(--muted)">Выберите цвет метки</span>
         </div>
       </div>
-      <button class="btn btn-primary" onclick="addCat()">+ Добавить категорию</button>
+      <button class="btn btn-primary" onclick="addCat()"><i class="ti ti-plus"></i> Добавить категорию</button>
     </div>
   </div>
 </div>
@@ -1254,7 +1280,7 @@ CLIENTS_TPL = """
 <div id="clientEditModal" class="modal">
   <div class="modal-box">
     <div class="modal-head">
-      <h3>✏️ Редактировать клиента</h3>
+      <h3><i class="ti ti-pencil"></i> Редактировать клиента</h3>
       <button class="modal-close" onclick="closeModal('clientEditModal')">×</button>
     </div>
     <input type="hidden" id="editClientId">
@@ -1394,7 +1420,7 @@ function filterByCat(catId, btn){
 
 async function editCategories(clientId, name){
   currentClientId = clientId;
-  document.getElementById('ccTitle').textContent = '🏷 Категории: ' + name;
+  document.getElementById('ccTitle').innerHTML = '<i class="ti ti-tag"></i> Категории: ' + name;
   var r = await fetch('/api/client/' + clientId + '/categories');
   var current = await r.json();
   var currentIds = current.map(function(c){ return c.id; });
@@ -1413,7 +1439,7 @@ async function saveCats(){
     body: JSON.stringify({category_ids: ids})
   });
   var j = await r.json();
-  if(j.ok){ showToast('✅ Категории сохранены', 'ok'); closeModal('clientCatModal'); setTimeout(function(){ location.reload(); }, 800); }
+  if(j.ok){ showToast('Категории сохранены', 'ok'); closeModal('clientCatModal'); setTimeout(function(){ location.reload(); }, 800); }
   else showToast('Ошибка', 'err');
 }
 
@@ -1426,7 +1452,7 @@ async function addCat(){
     body: JSON.stringify({name: name, color: color})
   });
   var j = await r.json();
-  if(j.ok){ showToast('✅ Категория добавлена', 'ok'); setTimeout(function(){ location.reload(); }, 600); }
+  if(j.ok){ showToast('Категория добавлена', 'ok'); setTimeout(function(){ location.reload(); }, 600); }
   else showToast('Ошибка: ' + j.error, 'err');
 }
 
@@ -1464,7 +1490,7 @@ async function saveClientEdit() {
     });
     const j = await r.json();
     if (j.ok) {
-        showToast('✅ Клиент обновлён', 'ok');
+        showToast('Клиент обновлён', 'ok');
         closeModal('clientEditModal');
         setTimeout(() => location.reload(), 800);
     } else {
@@ -1490,7 +1516,7 @@ def clients():
 BROADCAST_TPL = """
 <div class="scroll-page">
   <div class="page-hdr">
-    <h2>📢 Рассылка</h2>
+    <h2><i class="ti ti-speakerphone"></i> Рассылка</h2>
   </div>
   <p style="color:var(--text-sec);margin-bottom:20px;font-size:13px;max-width:720px">
     В тексте можно использовать подстановки (заменяются автоматически):
@@ -1502,10 +1528,10 @@ BROADCAST_TPL = """
   <div class="bc-card">
     <div class="bc-head">
       <div>
-        <div class="bc-title">⏰ {{ reminder.label }}</div>
+        <div class="bc-title"><i class="ti ti-clock"></i> {{ reminder.label }}</div>
         <div class="bc-hint">Бот раз в час берёт записи на завтра из YClients и за сутки отправляет это сообщение с кнопками «Подтвердить/Отменить».<br>{{ reminder.hint }}</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="resetTpl('reminder')">↩ Сбросить</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetTpl('reminder')"><i class="ti ti-arrow-back-up"></i> Сбросить</button>
     </div>
     <textarea id="tpl_reminder" rows="6" style="width:100%;font-family:inherit;font-size:13px;line-height:1.5">{{ reminder.text }}</textarea>
     <button class="btn btn-primary" style="margin-top:10px" onclick="saveTpl('reminder')">Сохранить</button>
@@ -1516,7 +1542,7 @@ BROADCAST_TPL = """
   <div class="bc-card">
     <div class="bc-head">
       <div>
-        <div class="bc-title">🎂 {{ birthday.label }}</div>
+        <div class="bc-title"><i class="ti ti-cake"></i> {{ birthday.label }}</div>
         <div class="bc-hint">Автоматическое поздравление в день рождения клиента (дата рождения из анкеты).<br>{{ birthday.hint }}</div>
       </div>
       <label class="switch" title="Автоотправка поздравлений">
@@ -1530,7 +1556,7 @@ BROADCAST_TPL = """
     <textarea id="tpl_birthday" rows="5" style="width:100%;font-family:inherit;font-size:13px;line-height:1.5">{{ birthday.text }}</textarea>
     <div style="margin-top:10px;display:flex;gap:8px">
       <button class="btn btn-primary" onclick="saveTpl('birthday')">Сохранить</button>
-      <button class="btn btn-ghost" onclick="resetTpl('birthday')">↩ Сбросить</button>
+      <button class="btn btn-ghost" onclick="resetTpl('birthday')"><i class="ti ti-arrow-back-up"></i> Сбросить</button>
     </div>
   </div>
   {% endif %}
@@ -1561,7 +1587,7 @@ async function saveTpl(key){
     body: JSON.stringify({text: text})
   });
   var j = await r.json();
-  if(j.ok) showToast('✅ Шаблон сохранён', 'ok');
+  if(j.ok) showToast('Шаблон сохранён', 'ok');
   else showToast('Ошибка: ' + (j.error || 'неизвестная'), 'err');
 }
 
@@ -1580,7 +1606,7 @@ async function toggleBirthday(el){
   var j = await r.json();
   if(j.ok){
     document.getElementById('bdayState').textContent = enabled ? 'включена' : 'выключена';
-    showToast(enabled ? '✅ Поздравления включены' : 'Поздравления выключены', 'ok');
+    showToast(enabled ? 'Поздравления включены' : 'Поздравления выключены', 'ok');
   } else {
     el.checked = !enabled;
     showToast('Ошибка сохранения', 'err');
@@ -1640,7 +1666,7 @@ BOT_TEXTS_ORDER = [
 
 BOT_TEXTS_TPL = """
 <div class="scroll-page">
-  <div class="page-hdr"><h2>📝 Шаблоны сообщений бота</h2></div>
+  <div class="page-hdr"><h2><i class="ti ti-file-text"></i> Шаблоны сообщений бота</h2></div>
   <p style="color:var(--text-sec);margin-bottom:20px;font-size:13px;max-width:760px">
     Здесь редактируются все тексты, которые бот отправляет клиенту. Подстановки в
     фигурных скобках заменяются автоматически (см. подсказку под заголовком).
@@ -1653,7 +1679,7 @@ BOT_TEXTS_TPL = """
         <div class="bt-title">{{ t.label }}</div>
         <div class="bt-hint">{{ t.hint }}</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="resetTpl('{{ t.key }}')">↩ Сбросить</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetTpl('{{ t.key }}')"><i class="ti ti-arrow-back-up"></i> Сбросить</button>
     </div>
     <textarea id="tpl_{{ t.key }}" rows="5" style="width:100%;font-family:inherit;font-size:13px;line-height:1.5">{{ t.text }}</textarea>
     <button class="btn btn-primary" style="margin-top:10px" onclick="saveTpl('{{ t.key }}')">Сохранить</button>
@@ -1677,7 +1703,7 @@ async function saveTpl(key){
     body: JSON.stringify({text: text})
   });
   var j = await r.json();
-  if(j.ok) showToast('✅ Сохранено', 'ok');
+  if(j.ok) showToast('Сохранено', 'ok');
   else showToast('Ошибка: ' + (j.error || 'неизвестная'), 'err');
 }
 function resetTpl(key){
@@ -1704,8 +1730,8 @@ def bot_texts_page():
 CHAT_TEMPLATES_TPL = """
 <div class="scroll-page">
   <div class="page-hdr">
-    <h2>⚡ Быстрые ответы (шаблоны для чата)</h2>
-    <button class="btn btn-primary" onclick="openModal('addTemplateModal')">+ Добавить шаблон</button>
+    <h2><i class="ti ti-bolt"></i> Быстрые ответы (шаблоны для чата)</h2>
+    <button class="btn btn-primary" onclick="openModal('addTemplateModal')"><i class="ti ti-plus"></i> Добавить шаблон</button>
   </div>
   <p style="color:var(--text-sec); margin-bottom:20px; font-size:13px;">
     Шаблоны появятся в виде кнопок над полем ввода в чате. При нажатии текст подставляется в поле – вы можете его отредактировать и отправить.
@@ -1726,8 +1752,8 @@ CHAT_TEMPLATES_TPL = """
         <td style="font-weight:600;">{{ t.name }}</td>
         <td style="max-width:400px; white-space:pre-wrap;">{{ t.text[:100] }}{% if t.text|length > 100 %}…{% endif %}</td>
         <td>
-          <button class="btn-sm" onclick="editTemplate({{t.id}}, '{{t.name|e}}', '{{t.text|e}}')">✏️</button>
-          <button class="btn-sm btn-danger" onclick="deleteTemplate({{t.id}})">🗑</button>
+          <button class="btn-sm" onclick="editTemplate({{t.id}}, '{{t.name|e}}', '{{t.text|e}}')"><i class="ti ti-pencil"></i></button>
+          <button class="btn-sm btn-danger" onclick="deleteTemplate({{t.id}})"><i class="ti ti-trash"></i></button>
         </td>
       </tr>
       {% endfor %}
@@ -1740,7 +1766,7 @@ CHAT_TEMPLATES_TPL = """
 <div id="addTemplateModal" class="modal">
   <div class="modal-box">
     <div class="modal-head">
-      <h3 id="templateModalTitle">➕ Добавить шаблон</h3>
+      <h3 id="templateModalTitle"><i class="ti ti-plus"></i> Добавить шаблон</h3>
       <button class="modal-close" onclick="closeModal('addTemplateModal')">×</button>
     </div>
     <input type="hidden" id="editTemplateId">
@@ -1765,7 +1791,7 @@ async function saveTemplate() {
     });
     const j = await r.json();
     if (j.ok) {
-        showToast('✅ Шаблон сохранён', 'ok');
+        showToast('Шаблон сохранён', 'ok');
         closeModal('addTemplateModal');
         setTimeout(() => location.reload(), 600);
     } else {
@@ -1777,7 +1803,7 @@ function editTemplate(id, name, text) {
     document.getElementById('editTemplateId').value = id;
     document.getElementById('templateName').value = name;
     document.getElementById('templateText').value = text;
-    document.getElementById('templateModalTitle').innerText = '✏️ Редактировать шаблон';
+    document.getElementById('templateModalTitle').innerHTML = '<i class="ti ti-pencil"></i> Редактировать шаблон';
     openModal('addTemplateModal');
 }
 
@@ -1800,7 +1826,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('editTemplateId').value = '';
             document.getElementById('templateName').value = '';
             document.getElementById('templateText').value = '';
-            document.getElementById('templateModalTitle').innerText = '➕ Добавить шаблон';
+            document.getElementById('templateModalTitle').innerHTML = '<i class="ti ti-plus"></i> Добавить шаблон';
         });
     }
 });
