@@ -1,0 +1,49 @@
+name: build-installer
+
+# Сборка установщика при пуше тега вида v1.2.3
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # нужно, чтобы опубликовать релиз
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Версия из тега -> version.py
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          "__version__ = `"$v`"" | Out-File -Encoding ascii version.py
+          "APPVER=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Версия сборки: $v"
+
+      - name: Зависимости
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Сборка приложения (PyInstaller)
+        run: pyinstaller reform.spec --noconfirm
+
+      - name: Установщик (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:APPVER" installer.iss
+
+      - name: Публикация релиза
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer_out/*.exe
+          name: Re.form CRM v${{ env.APPVER }}
+          generate_release_notes: true

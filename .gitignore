@@ -1,0 +1,26 @@
+# Секреты — НИКОГДА не коммитить
+config_local.py
+.env
+
+# База и данные пользователя
+*.db
+*.db-wal
+*.db-shm
+/data/
+/uploads/
+
+# Сборка
+build/
+dist/
+installer_out/
+*.spec.bak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Прочее
+visual/_sample_profile.png
+*.log
