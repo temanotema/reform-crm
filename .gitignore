@@ -1,6 +1,7 @@
 # Секреты — НИКОГДА не коммитить
 config_local.py
 .env
+migrate_pg_to_sqlite.py
 
 # База и данные пользователя
 *.db

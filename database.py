@@ -17,7 +17,10 @@ from datetime import datetime, date, time
 # ── Путь к файлу базы ──────────────────────────────────────────────────────────
 
 def _data_dir() -> str:
-    d = os.environ.get("REFORM_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".reform_crm")
+    d = os.environ.get("REFORM_DATA_DIR")
+    if not d:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        d = os.path.join(base, "ReformCRM")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -271,7 +274,7 @@ def init_db():
     init_bot_settings()
     ensure_vip_category()   # защищённая категория «VIP» (нельзя удалить)
 
-    print("✅ DB initialized:", DB_PATH)
+    print("DB initialized:", DB_PATH)
 
 
 def _init_message_templates():

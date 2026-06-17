@@ -11,11 +11,28 @@ Telegram-бота в фоне. База и загрузки хранятся в 
 
 import os
 import sys
+import io
 import time
 import socket
 import asyncio
 import logging
 import threading
+
+
+# В упакованном Windows-приложении консоль может быть в cp1251 или вовсе
+# отсутствовать — тогда print('✅' ...) валит запуск. Делаем вывод безопасным.
+def _harden_stdio():
+    for name in ("stdout", "stderr"):
+        st = getattr(sys, name, None)
+        if st is None:
+            setattr(sys, name, io.StringIO())
+        else:
+            try:
+                st.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+_harden_stdio()
 
 # ── Папка данных (база + загрузки) — до импорта database/admin_web! ───────────
 _BASE = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
