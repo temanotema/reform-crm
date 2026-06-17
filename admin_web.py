@@ -71,7 +71,7 @@ def _tg_api(method, data=None, files=None):
 
 
 def _send_tg(tg_id: int, text: str, reply_markup=None):
-    payload = {"chat_id": tg_id, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": tg_id, "text": text}
     if reply_markup:
         if hasattr(reply_markup, "model_dump"):
             payload["reply_markup"] = reply_markup.model_dump(exclude_none=True)
@@ -1887,7 +1887,7 @@ def api_send(client_id):
     warning = None
     if tg_id and tg_id > 0:
         try:
-            threading.Thread(target=_send_tg, args=(tg_id, text), daemon=True).start()
+            _send_tg(tg_id, text)
         except Exception as e:
             warning = str(e)
     else:
