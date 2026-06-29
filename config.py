@@ -13,6 +13,13 @@ import os
 # ── Telegram ──────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")     # реальный токен — в config_local.py
 
+# Прокси для ИСХОДЯЩИХ запросов к Telegram (нужен, если api.telegram.org недоступен
+# напрямую — напр. с сервера в РФ, где РКН режет Telegram). Транзит к Telegram идёт
+# через прокси вне РФ; персональные данные при этом остаются в РФ (152-ФЗ не нарушается).
+# Формат: "http://user:pass@host:port" или "socks5://user:pass@host:port".
+# Пусто = без прокси. Реальное значение — в config_local.py.
+TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY", "")
+
 ADMIN_IDS = [
     int(x.strip())
     for x in os.getenv("ADMIN_IDS", "").split(",")

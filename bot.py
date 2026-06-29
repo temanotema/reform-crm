@@ -19,7 +19,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import BOT_TOKEN, ADMIN_IDS, CLINIC_NAME
+from config import BOT_TOKEN, ADMIN_IDS, CLINIC_NAME, TELEGRAM_PROXY
 
 # ── Визуальный слой ──────────────────────────────────────────────────────────
 from visual.profile_card import render_profile_card
@@ -33,7 +33,14 @@ import yclients
 
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN)
+# Если задан TELEGRAM_PROXY — весь трафик бота к api.telegram.org идёт через него
+# (для socks5:// нужен пакет aiohttp-socks, см. requirements.txt).
+if TELEGRAM_PROXY:
+    from aiogram.client.session.aiohttp import AiohttpSession
+    bot = Bot(token=BOT_TOKEN, session=AiohttpSession(proxy=TELEGRAM_PROXY))
+    logger.info("Бот ходит в Telegram через прокси")
+else:
+    bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 

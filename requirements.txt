@@ -9,3 +9,5 @@ Pillow==10.4.0          # карточка профиля
 requests==2.32.3        # отправка в Telegram из веб-панели
 aiohttp>=3.10           # интеграция с YClients (новый aiogram тянет свежий aiohttp)
 sentry-sdk>=2.0         # мониторинг ошибок (выключен, пока не задан SENTRY_DSN)
+aiohttp-socks>=0.8      # SOCKS5-прокси для бота (Telegram через прокси вне РФ)
+PySocks>=1.7            # SOCKS5-прокси для запросов панели (requests)

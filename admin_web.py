@@ -18,8 +18,12 @@ import database as db
 import yclients
 from config import (
     ADMIN_PASSWORD, BOT_TOKEN, WEB_PORT, SECRET_KEY, CLINIC_NAME,
-    YCLIENTS_COMPANY_ID, YCLIENTS_CLIENT_URL_TEMPLATE,
+    YCLIENTS_COMPANY_ID, YCLIENTS_CLIENT_URL_TEMPLATE, TELEGRAM_PROXY,
 )
+
+# Прокси для запросов панели к Telegram (если api.telegram.org недоступен напрямую).
+# socks5:// требует пакет PySocks (см. requirements.txt).
+_TG_PROXIES = {"http": TELEGRAM_PROXY, "https": TELEGRAM_PROXY} if TELEGRAM_PROXY else None
 from templates import get_all_templates_for_ui, PLACEHOLDER_KEYS, EMOJI_MAP
 
 app = Flask(__name__)
@@ -267,9 +271,9 @@ def _media_kind(filename, mimetype=None):
 def _tg_api(method, data=None, files=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     if files:
-        resp = _requests.post(url, data=data, files=files, timeout=60)
+        resp = _requests.post(url, data=data, files=files, timeout=60, proxies=_TG_PROXIES)
     else:
-        resp = _requests.post(url, json=data, timeout=30)
+        resp = _requests.post(url, json=data, timeout=30, proxies=_TG_PROXIES)
     result = resp.json()
     if not result.get("ok"):
         raise Exception(result.get("description", "Telegram API error"))
@@ -1628,7 +1632,7 @@ function compressImage(file){
         cv.toBlob(function(blob){
           URL.revokeObjectURL(url);
           if(!blob){ resolve(file); return; }
-          var name = (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
+          var name = (file.name || 'photo').replace(/\\.[^.]+$/, '') + '.jpg';
           resolve(new File([blob], name, { type: 'image/jpeg' }));
         }, 'image/jpeg', 0.85);
       };
@@ -3008,7 +3012,7 @@ def api_media(message_id):
             import mimetypes
             from urllib.parse import quote
             url = _tg_file_url(msg["media_file_id"])
-            resp = _requests.get(url, timeout=30)
+            resp = _requests.get(url, timeout=30, proxies=_TG_PROXIES)
             if resp.status_code == 200:
                 fname = msg.get("media_filename") or "file"
                 # MIME по расширению имени (чтобы картинки/PDF открывались, а не качались
