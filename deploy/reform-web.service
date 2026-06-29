@@ -1,0 +1,17 @@
+[Unit]
+Description=Re.form web panel (CRM)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reform
+WorkingDirectory=/home/reform/reform
+ExecStart=/home/reform/reform/venv/bin/python run_web.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

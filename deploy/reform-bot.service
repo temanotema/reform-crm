@@ -1,0 +1,17 @@
+[Unit]
+Description=Re.form Telegram bot
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reform
+WorkingDirectory=/home/reform/reform
+ExecStart=/home/reform/reform/venv/bin/python run_bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

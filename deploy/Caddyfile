@@ -1,0 +1,8 @@
+# Caddy сам получает и продлевает HTTPS-сертификат Let's Encrypt.
+# Кладётся в /etc/caddy/Caddyfile, затем: sudo systemctl reload caddy
+# DNS panel.reform-cosmetology.ru → 158.160.212.148 уже настроен.
+
+panel.reform-cosmetology.ru {
+    encode gzip
+    reverse_proxy 127.0.0.1:5000
+}

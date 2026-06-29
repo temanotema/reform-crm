@@ -1,11 +1,11 @@
 # Re.form CRM — зависимости
-# База данных теперь SQLite (модуль sqlite3 встроен в Python — ставить нечего).
 
-aiogram==3.7.0          # Telegram-бот
+aiogram==3.28.2         # Telegram-бот (нужен >=3.23 для премиум-эмодзи и стилей кнопок, Bot API 9.4)
 flask==3.0.3            # веб-панель
+werkzeug>=3.0           # secure_filename (ставится вместе с Flask, фиксируем явно)
+waitress==3.0.0         # WSGI-сервер для панели (стабильный SSE, без зависаний)
+psycopg2-binary==2.9.9  # PostgreSQL
 Pillow==10.4.0          # карточка профиля
 requests==2.32.3        # отправка в Telegram из веб-панели
-aiohttp==3.9.5          # интеграция с YClients
-
-# Десктоп-приложение
-pywebview==5.2          # нативное окно вокруг веб-панели
+aiohttp>=3.10           # интеграция с YClients (новый aiogram тянет свежий aiohttp)
+sentry-sdk>=2.0         # мониторинг ошибок (выключен, пока не задан SENTRY_DSN)

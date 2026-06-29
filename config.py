@@ -20,7 +20,7 @@ ADMIN_IDS = [
 ]
 
 # ── Клиника ───────────────────────────────────────────────────────────────────
-CLINIC_NAME = os.getenv("CLINIC_NAME", "Re.form Cosmetology")
+CLINIC_NAME = os.getenv("CLINIC_NAME", "Re. form Cosmetology")
 
 AFTER_PHONE_MESSAGE = os.getenv(
     "AFTER_PHONE_MESSAGE",
@@ -34,6 +34,15 @@ AFTER_PHONE_MESSAGE = os.getenv(
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")   # ⚠️ поставь свой в config_local.py
 WEB_PORT       = int(os.getenv("WEB_PORT", "5000"))
 SECRET_KEY     = os.getenv("SECRET_KEY", "change_me_in_production_32chars!")
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+# Пароль БД — в config_local.py (не в git). DATABASE_URL собирается ниже,
+# уже ПОСЛЕ применения config_local.
+DB_HOST     = os.getenv("DB_HOST",     "localhost")
+DB_PORT     = os.getenv("DB_PORT",     "5432")
+DB_NAME     = os.getenv("DB_NAME",     "cosmo_db")
+DB_USER     = os.getenv("DB_USER",     "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
 # ── YCLIENTS API ──────────────────────────────────────────────────────────────
 # Секреты (partner-токен, логин, пароль) — в config_local.py. Здесь пусто.
@@ -64,6 +73,13 @@ YCLIENTS_CLIENT_URL_TEMPLATE = os.getenv(
 # ── Автообновление (GitHub Releases) ───────────────────────────────────────────
 GITHUB_REPO = os.getenv("GITHUB_REPO", "temanotema/reform-crm")
 
+# ── Мониторинг (Sentry) ─────────────────────────────────────────────────────────
+# Пока DSN пустой — мониторинг выключен (ничего никуда не отправляется).
+# Реальный ключ положи в config_local.py: SENTRY_DSN = "https://...".
+# Персональные данные в события не попадают (вырезаются в monitoring.py).
+SENTRY_DSN         = os.getenv("SENTRY_DSN", "")
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "local")   # на сервере поставь "production"
+
 
 # ── Локальные секреты (НЕ в git) ──────────────────────────────────────────────
 # config_local.py переопределяет значения выше реальными данными.
@@ -71,3 +87,7 @@ try:
     from config_local import *  # noqa: F401,F403
 except ImportError:
     pass
+
+# DATABASE_URL собираем ПОСЛЕ config_local — чтобы пароль из него попал в строку.
+DATABASE_URL = os.getenv("DATABASE_URL") or \
+    f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"

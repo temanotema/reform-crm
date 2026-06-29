@@ -26,6 +26,7 @@ yclients.py — интеграция с YCLIENTS REST API (только чтен
     GET  /records/{company_id}?client_id=...     — записи клиента (даты визитов)
 """
 
+import json
 import logging
 import asyncio
 from datetime import datetime, date, timedelta
@@ -50,6 +51,10 @@ COMPANY_ID    = getattr(config, "YCLIENTS_COMPANY_ID", "") or ""
 VIP_THRESHOLD = float(getattr(config, "YCLIENTS_VIP_THRESHOLD", 200000) or 200000)
 # Поле «суммы покупок» для VIP: "paid" (оплачено) или "spent" (потрачено).
 PAID_FIELD    = getattr(config, "YCLIENTS_PAID_FIELD", "paid") or "paid"
+# Поле баланса бонусов/кэшбэка в карточке клиента. Если пусто — пробуем
+# несколько распространённых названий по очереди (см. _build_summary).
+# Точное имя можно узнать командой: python yclients.py <телефон>
+BONUS_FIELD   = getattr(config, "YCLIENTS_BONUS_FIELD", "") or ""
 
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=12)
 
@@ -59,6 +64,50 @@ _user_token_cache = USER_TOKEN or None
 # Кэш сводок по телефону, чтобы не дёргать API на каждый клик.
 _summary_cache = {}          # phone -> (expires_at, data|None)
 _SUMMARY_TTL = timedelta(minutes=5)
+_SUMMARY_TTL_SEC = int(_SUMMARY_TTL.total_seconds())
+
+# Поля-даты в сводке — для сериализации в кэш базы и обратно.
+_SUMMARY_DATE_KEYS = ("last_visit", "first_visit", "birth_date", "nearest")
+
+
+def _summary_to_json(summary):
+    """Сериализует сводку в строку JSON (даты → ISO-строки)."""
+    return json.dumps(summary, default=str, ensure_ascii=False)
+
+
+def _summary_from_json(js):
+    """Восстанавливает сводку из JSON (ISO-строки → date/datetime)."""
+    d = json.loads(js)
+    for k in _SUMMARY_DATE_KEYS:
+        if d.get(k):
+            try:
+                d[k] = date.fromisoformat(str(d[k])[:10])
+            except Exception:
+                d[k] = None
+    if d.get("nearest_dt"):
+        try:
+            d["nearest_dt"] = datetime.fromisoformat(str(d["nearest_dt"]))
+        except Exception:
+            d["nearest_dt"] = None
+    return d
+
+
+def _db_cache_get(key):
+    """Чтение кэша из базы (best-effort): {'data','age'} или None."""
+    try:
+        import database as db
+        return db.get_yc_cache(key)
+    except Exception:
+        return None
+
+
+def _db_cache_set(key, summary):
+    """Запись кэша в базу (best-effort)."""
+    try:
+        import database as db
+        db.set_yc_cache(key, _summary_to_json(summary))
+    except Exception:
+        pass
 
 
 def is_configured() -> bool:
@@ -159,6 +208,51 @@ async def search_client_id(session, phone: str):
         if _digits(row.get("phone", ""))[-10:] == tail:
             return row.get("id")
     return rows[0].get("id") if rows else None
+
+
+_group_id_cache = None
+
+
+async def _get_loyalty_group_id(session):
+    """ID сети (group_id) для путей лояльности. Берём из типов карт филиала
+    и кэшируем в памяти процесса."""
+    global _group_id_cache
+    if _group_id_cache:
+        return _group_id_cache
+    data = await _request(session, "GET", f"/loyalty/card_types/salon/{COMPANY_ID}")
+    if not data or not data.get("success"):
+        return None
+    for row in (data.get("data") or []):
+        gid = row.get("salon_group_id")
+        if gid:
+            _group_id_cache = gid
+            return gid
+    return None
+
+
+async def get_client_cashback(session, phone):
+    """Баланс кэшбэка клиента из карт лояльности.
+
+    GET /loyalty/cards/{phone}/{group_id}/{company_id} — список карт клиента;
+    у каждой карты есть поле balance. Берём баланс карты типа «Кэшбек».
+    Возвращает float или None (если лояльность не настроена / ошибка)."""
+    group_id = await _get_loyalty_group_id(session)
+    if not group_id:
+        return None
+    data = await _request(
+        session, "GET",
+        f"/loyalty/cards/{_digits(phone)}/{group_id}/{COMPANY_ID}",
+    )
+    if not data or not data.get("success"):
+        return None
+    cards = data.get("data") or []
+    if not cards:
+        return 0.0
+    cashback = [c for c in cards
+                if any(s in ((c.get("type") or {}).get("title") or "").lower()
+                       for s in ("кэшб", "кешб", "cashback"))]
+    pool = cashback or cards
+    return max(_to_float(c.get("balance")) for c in pool)
 
 
 async def get_client_details(session, client_id):
@@ -263,6 +357,53 @@ async def get_appointments_for_date(target_date):
             return []
 
 
+async def get_records_in_range(session, start_date, end_date):
+    """Записи компании за период (тот же формат, что и get_day_records)."""
+    params = {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "count": 1000,
+        "page": 1,
+    }
+    data = await _request(session, "GET", f"/records/{COMPANY_ID}", params=params)
+    if not data or not data.get("success"):
+        return None
+    out = []
+    for rec in (data.get("data") or []):
+        if rec.get("deleted"):
+            continue
+        dt = _parse_dt(rec.get("datetime") or rec.get("date"))
+        if not dt:
+            continue
+        client = rec.get("client") or {}
+        staff = rec.get("staff") or {}
+        master = staff.get("name") or rec.get("staff_name") or ""
+        out.append({
+            "record_id":   rec.get("id"),
+            "datetime":    dt,
+            "phone":       client.get("phone") or "",
+            "client_name": client.get("name") or "",
+            "master":      master,
+        })
+    return out
+
+
+async def get_future_records(days: int = 90):
+    """Все будущие записи компании на ближайшие `days` дней (для уведомлений
+    «вы записаны»). None при ошибке/не настроенной интеграции."""
+    if not is_configured():
+        return None
+    today = date.today()
+    async with aiohttp.ClientSession() as session:
+        try:
+            if not await authenticate(session):
+                return None
+            return await get_records_in_range(session, today, today + timedelta(days=days))
+        except Exception as e:
+            logger.warning("YClients: ошибка чтения будущих записей: %s", e)
+            return None
+
+
 # ── Парсинг ───────────────────────────────────────────────────────────────────
 
 def _parse_dt(value):
@@ -316,6 +457,16 @@ async def _build_summary(session, phone: str):
 
     total_paid = _to_float(_first(PAID_FIELD, "paid", "spent", "sold_amount", default=0))
 
+    # Баланс кэшбэка для карточки профиля. В карточке клиента его нет —
+    # берём из карт лояльности отдельным методом.
+    bonus = await get_client_cashback(session, phone)
+    if bonus is None:
+        if BONUS_FIELD:
+            bonus = _to_float(details.get(BONUS_FIELD, 0))
+        else:
+            bonus = _to_float(_first("bonus", "loyalty_bonus", "cashback", "balance", default=0))
+    bonus = bonus or 0.0
+
     # Последний визит: из карточки (если вдруг есть), иначе из записей.
     last_visit = _parse_date(_first("last_visit_date", "last_visit"))
     if not last_visit and last_visit_dt:
@@ -336,6 +487,7 @@ async def _build_summary(session, phone: str):
         "first_visit": first_visit,
         "birth_date":  _parse_date(_first("birth_date", "birthday")),
         "total_paid":  total_paid,
+        "bonus":       bonus,
         "is_vip":      total_paid >= VIP_THRESHOLD,
         "nearest_dt":  nearest_dt,
         "nearest":     nearest_dt.date() if nearest_dt else None,
@@ -352,10 +504,24 @@ async def get_profile_summary(phone: str):
         return None
 
     key = _digits(phone)
+    now = datetime.now()
+
+    # 1. Кэш в памяти — самый быстрый путь.
     cached = _summary_cache.get(key)
-    if cached and cached[0] > datetime.now():
+    if cached and cached[0] > now:
         return cached[1]
 
+    # 2. Кэш в базе: если свежий (< TTL) — отдаём сразу, не дёргая YClients.
+    db_row = _db_cache_get(key)
+    if db_row and db_row.get("age") is not None and float(db_row["age"]) < _SUMMARY_TTL_SEC:
+        try:
+            summary = _summary_from_json(db_row["data"])
+            _summary_cache[key] = (now + _SUMMARY_TTL, summary)
+            return summary
+        except Exception:
+            pass
+
+    # 3. Живой запрос к YClients.
     async with aiohttp.ClientSession() as session:
         try:
             summary = await _build_summary(session, phone)
@@ -363,7 +529,17 @@ async def get_profile_summary(phone: str):
             logger.warning("YClients: ошибка сводки для %s: %s", key, e)
             summary = None
 
-    _summary_cache[key] = (datetime.now() + _SUMMARY_TTL, summary)
+    if summary is not None:
+        _db_cache_set(key, summary)                      # обновляем кэш базы
+    elif db_row and db_row.get("data"):
+        # YClients недоступен — отдаём последние известные данные из базы.
+        try:
+            summary = _summary_from_json(db_row["data"])
+            logger.info("YClients недоступен — отдаю кэш для %s", key)
+        except Exception:
+            summary = None
+
+    _summary_cache[key] = (now + _SUMMARY_TTL, summary)
     return summary
 
 
@@ -389,8 +565,22 @@ if __name__ == "__main__":
                 details = await get_client_details(session, cid)
                 print("--- client details (raw) ---")
                 print(_json.dumps(details, ensure_ascii=False, indent=2)[:2000])
+                print("--- кандидаты на БОНУС/КЭШБЭК/БАЛАНС ---")
+                hit = False
+                for k, v in (details or {}).items():
+                    if any(s in str(k).lower() for s in
+                           ("bonus", "balance", "loyal", "cash", "point")):
+                        print(f"  {k} = {v}")
+                        hit = True
+                if not hit:
+                    print("  (в карточке таких полей нет — бонусы берутся "
+                          "из отдельного метода лояльности)")
                 fv, lv, nr = await get_visit_dates(session, cid)
                 print("first visit:", fv, "| last visit:", lv, "| nearest record:", nr)
+                gid = await _get_loyalty_group_id(session)
+                print("loyalty group_id:", gid)
+                cb = await get_client_cashback(session, phone)
+                print("КЭШБЭК (баланс карты лояльности):", cb)
         print("--- summary ---")
         print(await get_profile_summary(phone))
 

@@ -9,6 +9,20 @@ migrate_pg_to_sqlite.py
 *.db-shm
 /data/
 /uploads/
+/doctors_photos/
+/emoji_pack/
+/uslugi/
+/portfolio/
+
+# Бэкапы и дампы БД — на сервер не несём (база стартует с чистой)
+*.zip
+*.sql
+
+# Информационные файлы — только локально (на сервер не нужны)
+ЗАДАЧИ.txt
+ЗАДАЧИ_СЕРВЕР.txt
+КОНТЕКСТ_для_продолжения.md
+QUICKSTART_сервер.md
 
 # Сборка
 build/

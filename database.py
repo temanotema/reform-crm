@@ -1,30 +1,61 @@
 """
-database.py — слой данных (SQLite, встроенная база, без отдельного сервера).
-
-Файл базы лежит в пользовательской папке (по умолчанию ~/.reform_crm/cosmo.db
-или путь из переменной окружения DB_PATH). API функций полностью совпадает с
-прежней версией на PostgreSQL — остальной код менять не нужно.
+database.py — слой данных (PostgreSQL через psycopg2).
 """
 
-import os
 import re
-import json
-import sqlite3
+import logging
+import threading
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
 from contextlib import contextmanager
-from datetime import datetime, date, time
+from config import DATABASE_URL
+
+logger = logging.getLogger(__name__)
 
 
-# ── Путь к файлу базы ──────────────────────────────────────────────────────────
+# ── Пул соединений ────────────────────────────────────────────────────────────
+# Раньше на каждый запрос открывалось НОВОЕ подключение к PostgreSQL — это
+# медленно (особенно при частом опросе). Пул переиспользует соединения.
 
-def _data_dir() -> str:
-    d = os.environ.get("REFORM_DATA_DIR")
-    if not d:
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        d = os.path.join(base, "ReformCRM")
-    os.makedirs(d, exist_ok=True)
-    return d
+_POOL = None
+_POOL_LOCK = threading.Lock()
 
-DB_PATH = os.environ.get("DB_PATH") or os.path.join(_data_dir(), "cosmo.db")
+
+def _get_pool():
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                _POOL = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+    return _POOL
+
+
+# Ошибки уровня соединения (обрыв сети, рестарт БД, протухшее соединение).
+_CONN_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
+
+
+def _reset_pool():
+    """Закрывает текущий пул и сбрасывает его — следующий запрос поднимет новый
+    с живыми соединениями. Нужно после обрыва/рестарта БД."""
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is not None:
+            try:
+                _POOL.closeall()
+            except Exception:
+                pass
+            _POOL = None
+
+
+def _with_retry(run):
+    """Выполняет запрос; при потере соединения переподключается и повторяет один раз."""
+    try:
+        return run()
+    except _CONN_ERRORS as e:
+        logger.warning("Соединение с БД потеряно (%s) — переподключаюсь и повторяю", e)
+        _reset_pool()
+        return run()
 
 
 # ── Утилита нормализации телефона ─────────────────────────────────────────────
@@ -38,110 +69,72 @@ def normalize_phone(raw: str) -> str:
     return digits
 
 
-# ── Парсинг дат из текста SQLite в объекты Python ─────────────────────────────
-
-def _parse_dt(s):
-    if not s or not isinstance(s, str):
-        return s
-    s = s.strip().replace("T", " ")
-    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(s[:26], fmt)
-        except ValueError:
-            continue
-    return None
-
-def _parse_date(s):
-    dt = _parse_dt(s)
-    return dt.date() if dt else None
-
-def _parse_time(s):
-    if not s or not isinstance(s, str):
-        return s
-    for fmt in ("%H:%M:%S.%f", "%H:%M:%S", "%H:%M"):
-        try:
-            return datetime.strptime(s.strip(), fmt).time()
-        except ValueError:
-            continue
-    return None
-
-# Столбцы, которые автоматически превращаем в datetime/date/time при чтении.
-_DT_COLS   = {"created_at", "last_message_at", "phone_confirmed_at", "sent_at"}
-_DATE_COLS = {"birth_date", "booking_date"}
-_TIME_COLS = {"booking_time"}
-
-
-def _row_factory(cursor, row):
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        name = col[0]
-        val = row[idx]
-        if isinstance(val, str) and val:
-            if name in _DT_COLS:
-                val = _parse_dt(val)
-            elif name in _DATE_COLS:
-                val = _parse_date(val)
-            elif name in _TIME_COLS:
-                val = _parse_time(val)
-        d[name] = val
-    return d
-
-
-# sqlite3 не умеет сам сохранять объекты date/datetime — задаём адаптеры.
-sqlite3.register_adapter(datetime, lambda v: v.strftime("%Y-%m-%d %H:%M:%S"))
-sqlite3.register_adapter(date, lambda v: v.strftime("%Y-%m-%d"))
-sqlite3.register_adapter(time, lambda v: v.strftime("%H:%M:%S"))
-
-
 # ── Соединение ────────────────────────────────────────────────────────────────
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
-    conn.row_factory = _row_factory
+    pool = _get_pool()
+    conn = pool.getconn()
+    broken = False
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=8000")
-        conn.execute("PRAGMA foreign_keys=ON")
+        conn.autocommit = False
         yield conn
         conn.commit()
+    except _CONN_ERRORS:
+        broken = True
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        conn.close()
-
-
-def _prep(sql):
-    """PostgreSQL-стиль %s → SQLite ?, и убираем RETURNING (берём lastrowid)."""
-    sql = sql.replace("%s", "?")
-    sql = re.sub(r"\s+RETURNING\s+\w+", "", sql, flags=re.IGNORECASE)
-    return sql
+        # битое соединение НЕ возвращаем в пул (close=True), чтобы не переиспользовать.
+        try:
+            pool.putconn(conn, close=broken or bool(getattr(conn, "closed", 0)))
+        except Exception:
+            pass
 
 
 def fetchall(sql, params=()):
-    with get_conn() as conn:
-        cur = conn.execute(_prep(sql), params)
-        return cur.fetchall()
+    def run():
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, params)
+            return cur.fetchall()
+    return _with_retry(run)
 
 
 def fetchone(sql, params=()):
-    with get_conn() as conn:
-        cur = conn.execute(_prep(sql), params)
-        return cur.fetchone()
+    def run():
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, params)
+            return cur.fetchone()
+    return _with_retry(run)
 
 
 def execute(sql, params=()):
-    with get_conn() as conn:
-        cur = conn.execute(_prep(sql), params)
-        return cur.rowcount
+    def run():
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return cur.rowcount
+    return _with_retry(run)
 
 
 def execute_returning(sql, params=()):
-    """Аналог прежнего RETURNING id — возвращает {'id': <новый id>}."""
-    with get_conn() as conn:
-        cur = conn.execute(_prep(sql), params)
-        return {"id": cur.lastrowid}
+    def run():
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, params)
+            return cur.fetchone()
+    return _with_retry(run)
 
 
 # ── Инициализация БД ──────────────────────────────────────────────────────────
@@ -152,129 +145,179 @@ def init_db():
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS clients (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                tg_id               INTEGER UNIQUE NOT NULL,
+                id                  SERIAL PRIMARY KEY,
+                tg_id               BIGINT UNIQUE NOT NULL,
                 username            TEXT DEFAULT '',
                 first_name          TEXT DEFAULT '',
                 last_name           TEXT DEFAULT '',
                 patronymic          TEXT DEFAULT '',
                 phone               TEXT DEFAULT '',
                 notes               TEXT DEFAULT '',
-                created_at          TIMESTAMP DEFAULT (datetime('now','localtime')),
-                phone_confirmed_at  TIMESTAMP,
-                unread_count        INTEGER DEFAULT 0
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                phone_confirmed_at  TIMESTAMPTZ,
+                unread_count        INT DEFAULT 0
             )
         """)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS messages (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                id          SERIAL PRIMARY KEY,
+                client_id   INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
                 direction   TEXT NOT NULL,
                 text        TEXT NOT NULL,
-                created_at  TIMESTAMP DEFAULT (datetime('now','localtime')),
-                is_read     INTEGER DEFAULT 0
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                is_read     BOOLEAN DEFAULT FALSE
             )
         """)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS bookings (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_id           INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                id              SERIAL PRIMARY KEY,
+                client_id       INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
                 client_phone        TEXT NOT NULL,
                 client_name         TEXT NOT NULL,
                 client_first_name   TEXT DEFAULT '',
                 client_last_name    TEXT DEFAULT '',
                 client_patronymic   TEXT DEFAULT '',
                 master_name         TEXT NOT NULL,
-                booking_time        TIME NOT NULL,
-                booking_date        DATE NOT NULL,
-                created_at          TIMESTAMP DEFAULT (datetime('now','localtime')),
-                reminder_sent       INTEGER DEFAULT 0,
-                status              TEXT DEFAULT 'active'
+                booking_time    TIME NOT NULL,
+                booking_date    DATE NOT NULL,
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                reminder_sent   BOOLEAN DEFAULT FALSE,
+                status          TEXT DEFAULT 'active'
             )
         """)
 
+        # Врачи
         cur.execute("""
             CREATE TABLE IF NOT EXISTS doctors (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 full_name  TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT (datetime('now','localtime'))
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
+        # Категории клиентов
         cur.execute("""
             CREATE TABLE IF NOT EXISTS client_categories (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 name       TEXT NOT NULL UNIQUE,
                 color      TEXT DEFAULT '#c06090',
-                created_at TIMESTAMP DEFAULT (datetime('now','localtime')),
-                protected  INTEGER DEFAULT 0
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
+        # Связь клиент ↔ категория (многие ко многим)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS client_category_map (
-                client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-                category_id INTEGER NOT NULL REFERENCES client_categories(id) ON DELETE CASCADE,
+                client_id   INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                category_id INT NOT NULL REFERENCES client_categories(id) ON DELETE CASCADE,
                 PRIMARY KEY (client_id, category_id)
             )
         """)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chat_templates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 text TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT (datetime('now','localtime'))
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
+        # Дедупликация отправленных напоминаний (по id записи YCLIENTS).
         cur.execute("""
             CREATE TABLE IF NOT EXISTS yc_reminders_sent (
-                record_id INTEGER PRIMARY KEY,
-                sent_at   TIMESTAMP DEFAULT (datetime('now','localtime'))
+                record_id BIGINT PRIMARY KEY,
+                sent_at   TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
+        # Дедупликация уведомлений «вы записаны» (по id записи YCLIENTS).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS yc_bookings_notified (
+                record_id BIGINT PRIMARY KEY,
+                sent_at   TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # «Замеченные» записи: запись должна встретиться минимум в двух опросах
+        # подряд, прежде чем по ней уйдёт подтверждение. Защита от записей,
+        # которые создали и тут же удалили (тест/ошибка).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS yc_bookings_seen (
+                record_id  BIGINT PRIMARY KEY,
+                first_seen TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # Дедупликация поздравлений с ДР (по клиенту и году).
         cur.execute("""
             CREATE TABLE IF NOT EXISTS birthday_sent (
-                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-                year      INTEGER NOT NULL,
-                sent_at   TIMESTAMP DEFAULT (datetime('now','localtime')),
+                client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                year      INT NOT NULL,
+                sent_at   TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (client_id, year)
+            )
+        """)
+
+        # Аналитика: события бота (что нажимают/выбирают). Без перс. данных —
+        # только тип события, необязательная деталь (напр. категория) и время.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bot_events (
+                id         SERIAL PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                detail     TEXT DEFAULT '',
+                client_id  INT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # Кэш сводок YClients (по телефону) — чтобы профиль открывался мгновенно
+        # и переживал недоступность YClients (отдаём последние известные данные).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS yc_cache (
+                phone      TEXT PRIMARY KEY,
+                data       TEXT NOT NULL,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_client  ON messages(client_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_bot_events_type    ON bot_events(event_type)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_bot_events_created ON bot_events(created_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_date    ON bookings(booking_date)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_client  ON bookings(client_id)")
 
-    # Идемпотентные миграции (в SQLite нет ADD COLUMN IF NOT EXISTS — ловим ошибку).
-    _safe_alter("ALTER TABLE clients  ADD COLUMN unread_count INTEGER DEFAULT 0")
-    _safe_alter("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0")
-    _safe_alter("ALTER TABLE messages ADD COLUMN media_type TEXT")
-    _safe_alter("ALTER TABLE messages ADD COLUMN media_file_id TEXT")
-    _safe_alter("ALTER TABLE messages ADD COLUMN media_filename TEXT")
-    _safe_alter("ALTER TABLE messages ADD COLUMN media_local_path TEXT")
-    _safe_alter("ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER DEFAULT 0")
-    _safe_alter("ALTER TABLE bookings ADD COLUMN status TEXT DEFAULT 'active'")
-    _safe_alter("ALTER TABLE clients ADD COLUMN patronymic TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE bookings ADD COLUMN client_first_name TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE bookings ADD COLUMN client_last_name TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE bookings ADD COLUMN client_patronymic TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE clients ADD COLUMN reg_last_name  TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE clients ADD COLUMN reg_first_name TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE clients ADD COLUMN reg_patronymic TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE clients ADD COLUMN birth_date DATE")
-    _safe_alter("ALTER TABLE client_categories ADD COLUMN protected INTEGER DEFAULT 0")
+    _safe_alter("ALTER TABLE clients  ADD COLUMN IF NOT EXISTS unread_count INT DEFAULT 0")
+    _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT FALSE")
+    _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_type TEXT")
+    _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_file_id TEXT")
+    _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_filename TEXT")
+    _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_local_path TEXT")
+    _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE")
+    _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'")
+    _safe_alter("ALTER TABLE clients ADD COLUMN IF NOT EXISTS patronymic TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_first_name TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_last_name TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_patronymic TEXT DEFAULT ''")
+    # Поля анкеты из бота (ФИО + дата рождения). Их не затирает Telegram-имя.
+    _safe_alter("ALTER TABLE clients ADD COLUMN IF NOT EXISTS reg_last_name  TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE clients ADD COLUMN IF NOT EXISTS reg_first_name TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE clients ADD COLUMN IF NOT EXISTS reg_patronymic TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE clients ADD COLUMN IF NOT EXISTS birth_date DATE")
+    _safe_alter("ALTER TABLE client_categories ADD COLUMN IF NOT EXISTS protected BOOLEAN DEFAULT FALSE")
+    # Врачи (для кнопки «Наши врачи» в боте): должность, фото, порядок.
+    _safe_alter("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS title TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS photo TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0")
 
     _init_message_templates()
     init_bot_settings()
     ensure_vip_category()   # защищённая категория «VIP» (нельзя удалить)
 
-    print("DB initialized:", DB_PATH)
+    logger.info("DB initialized")
 
 
 def _init_message_templates():
@@ -289,7 +332,7 @@ def _init_message_templates():
         """)
         for key, meta in DEFAULT_TEMPLATES.items():
             cur.execute(
-                "INSERT INTO message_templates (key, text) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
+                "INSERT INTO message_templates (key, text) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                 (key, meta["text"]),
             )
 
@@ -297,9 +340,9 @@ def _init_message_templates():
 def _safe_alter(sql):
     try:
         with get_conn() as conn:
-            conn.execute(sql)
-    except Exception:
-        pass  # столбец уже есть — это нормально
+            conn.cursor().execute(sql)
+    except Exception as e:
+        logger.debug("alter note: %s", e)
 
 
 # ── CLIENTS ───────────────────────────────────────────────────────────────────
@@ -313,7 +356,7 @@ def upsert_client(tg_id, username="", first_name="", last_name="", patronymic=""
         )
         return row["id"]
     row = execute_returning(
-        "INSERT INTO clients (tg_id,username,first_name,last_name,patronymic) VALUES (%s,%s,%s,%s,%s)",
+        "INSERT INTO clients (tg_id,username,first_name,last_name,patronymic) VALUES (%s,%s,%s,%s,%s) RETURNING id",
         (tg_id, username, first_name, last_name, patronymic),
     )
     return row["id"]
@@ -353,7 +396,7 @@ def client_display_name(client):
 def save_client_phone(tg_id, phone):
     phone = normalize_phone(phone)
     execute(
-        "UPDATE clients SET phone=%s, phone_confirmed_at=datetime('now','localtime') WHERE tg_id=%s",
+        "UPDATE clients SET phone=%s, phone_confirmed_at=NOW() WHERE tg_id=%s",
         (phone, tg_id),
     )
 
@@ -372,27 +415,33 @@ def get_client_by_phone(phone):
 
 
 def get_all_clients():
-    rows = fetchall("""
+    return fetchall("""
         SELECT c.*,
-               (SELECT text       FROM messages WHERE client_id=c.id ORDER BY datetime(created_at) DESC, id DESC LIMIT 1) AS last_message,
-               (SELECT created_at FROM messages WHERE client_id=c.id ORDER BY datetime(created_at) DESC, id DESC LIMIT 1) AS last_message_at,
+               (SELECT text       FROM messages WHERE client_id=c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
+               (SELECT created_at FROM messages WHERE client_id=c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
                COALESCE(
-                 (SELECT json_group_array(json_object('id', cc.id, 'name', cc.name, 'color', cc.color))
+                 (SELECT json_agg(json_build_object('id', cc.id, 'name', cc.name, 'color', cc.color))
                   FROM client_categories cc
                   JOIN client_category_map ccm ON ccm.category_id = cc.id
-                  WHERE ccm.client_id = c.id), '[]'
+                  WHERE ccm.client_id = c.id), '[]'::json
                ) AS categories
         FROM clients c
-        ORDER BY last_message_at DESC, c.created_at DESC
+        ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
     """)
-    for r in rows:
-        cats = r.get("categories")
-        if isinstance(cats, str):
-            try:
-                r["categories"] = json.loads(cats)
-            except Exception:
-                r["categories"] = []
-    return rows
+
+
+def get_dialogs_light():
+    """Лёгкая версия для частого опроса (без категорий) — только то, что нужно
+    списку диалогов: id, непрочитанные, последнее сообщение и его время."""
+    return fetchall("""
+        SELECT c.id, c.unread_count, c.phone, c.username,
+               c.first_name, c.last_name, c.patronymic,
+               c.reg_first_name, c.reg_last_name, c.reg_patronymic,
+               (SELECT text       FROM messages WHERE client_id=c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
+               (SELECT created_at FROM messages WHERE client_id=c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at
+        FROM clients c
+        ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+    """)
 
 
 def update_client_notes(client_id, notes):
@@ -422,7 +471,7 @@ def get_all_categories():
 def create_category(name, color="#c06090"):
     try:
         row = execute_returning(
-            "INSERT INTO client_categories (name, color) VALUES (%s, %s)",
+            "INSERT INTO client_categories (name, color) VALUES (%s, %s) RETURNING id",
             (name, color),
         )
         return row["id"] if row else None
@@ -443,10 +492,10 @@ def ensure_vip_category():
     """Возвращает id защищённой категории «VIP» (создаёт её при необходимости)."""
     row = fetchone("SELECT id FROM client_categories WHERE name=%s", ("VIP",))
     if row:
-        execute("UPDATE client_categories SET protected=1 WHERE id=%s", (row["id"],))
+        execute("UPDATE client_categories SET protected=TRUE WHERE id=%s", (row["id"],))
         return row["id"]
     row = execute_returning(
-        "INSERT INTO client_categories (name, color, protected) VALUES (%s, %s, 1)",
+        "INSERT INTO client_categories (name, color, protected) VALUES (%s, %s, TRUE) RETURNING id",
         ("VIP", "#b08d57"),
     )
     return row["id"] if row else None
@@ -492,14 +541,32 @@ def get_client_categories(client_id):
     """, (client_id,))
 
 
+# ── ВРАЧИ (для кнопки «Наши врачи» в боте) ────────────────────────────────────
+
+def get_all_doctors():
+    return fetchall("SELECT * FROM doctors ORDER BY sort_order, id")
+
+
+def clear_doctors():
+    execute("DELETE FROM doctors")
+
+
+def add_doctor(full_name, title="", photo="", sort_order=0):
+    row = execute_returning(
+        "INSERT INTO doctors (full_name, title, photo, sort_order) VALUES (%s, %s, %s, %s) RETURNING id",
+        (full_name, title, photo, sort_order),
+    )
+    return row["id"] if row else None
+
+
 # ── MESSAGES ──────────────────────────────────────────────────────────────────
 
 def save_message(client_id, direction, text, media_type=None, media_file_id=None,
                  media_filename=None, media_local_path=None):
-    execute(
+    execute_returning(
         """INSERT INTO messages
            (client_id, direction, text, media_type, media_file_id, media_filename, media_local_path)
-           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
         (client_id, direction, text, media_type, media_file_id, media_filename, media_local_path),
     )
     if direction == "in":
@@ -512,20 +579,20 @@ def get_message(message_id):
 
 def get_messages(client_id):
     return fetchall(
-        "SELECT * FROM messages WHERE client_id=%s ORDER BY datetime(created_at) ASC, id ASC",
+        "SELECT * FROM messages WHERE client_id=%s ORDER BY created_at ASC",
         (client_id,),
     )
 
 
 def get_messages_since(client_id, after_id=0):
     return fetchall(
-        "SELECT * FROM messages WHERE client_id=%s AND id > %s ORDER BY id ASC",
+        "SELECT * FROM messages WHERE client_id=%s AND id > %s ORDER BY created_at ASC",
         (client_id, after_id),
     )
 
 
 def mark_messages_read(client_id):
-    execute("UPDATE messages SET is_read=1 WHERE client_id=%s AND direction='in'", (client_id,))
+    execute("UPDATE messages SET is_read=TRUE WHERE client_id=%s AND direction='in'", (client_id,))
     execute("UPDATE clients SET unread_count=0 WHERE id=%s", (client_id,))
 
 
@@ -537,10 +604,105 @@ def get_total_unread():
 def get_unread_summary():
     """Сводка непрочитанного: число диалогов с непрочитанными и общее число."""
     row = fetchone(
-        "SELECT SUM(CASE WHEN unread_count > 0 THEN 1 ELSE 0 END) AS dialogs, "
+        "SELECT COUNT(*) FILTER (WHERE unread_count > 0) AS dialogs, "
         "COALESCE(SUM(unread_count),0) AS total FROM clients"
     )
     return {"dialogs": int(row["dialogs"] or 0), "total": int(row["total"] or 0)}
+
+
+def get_dashboard_stats():
+    """Сводные показатели для мини-дашборда."""
+    def n(sql, params=()):
+        r = fetchone(sql, params)
+        return int((r or {}).get("n") or 0)
+
+    stats = {
+        "total_clients": n("SELECT COUNT(*) AS n FROM clients"),
+        "new_today": n("SELECT COUNT(*) AS n FROM clients WHERE created_at::date = CURRENT_DATE"),
+        "new_7d": n("SELECT COUNT(*) AS n FROM clients WHERE created_at >= NOW() - INTERVAL '7 days'"),
+        "msg_in_7d": n("SELECT COUNT(*) AS n FROM messages WHERE direction='in'  AND created_at >= NOW() - INTERVAL '7 days'"),
+        "msg_out_7d": n("SELECT COUNT(*) AS n FROM messages WHERE direction='out' AND created_at >= NOW() - INTERVAL '7 days'"),
+    }
+    rows = fetchall("""
+        SELECT to_char(d.day, 'DD.MM') AS label,
+               COALESCE(COUNT(m.id), 0) AS cnt
+        FROM generate_series(CURRENT_DATE - 6, CURRENT_DATE, INTERVAL '1 day') AS d(day)
+        LEFT JOIN messages m ON m.created_at::date = d.day::date AND m.direction = 'in'
+        GROUP BY d.day
+        ORDER BY d.day
+    """)
+    stats["series"] = [{"label": r["label"], "cnt": int(r["cnt"])} for r in rows]
+    s = get_unread_summary()
+    stats["unread_dialogs"] = s["dialogs"]
+    stats["unread_total"] = s["total"]
+    return stats
+
+
+# ── Аналитика событий бота ──────────────────────────────────────────────────────
+
+def log_event(event_type, detail="", client_id=None):
+    """Записывает событие бота (что нажали/выбрали). Без перс. данных.
+    Лучшее-усилие: при ошибке только логируем, бота не роняем."""
+    try:
+        execute(
+            "INSERT INTO bot_events (event_type, detail, client_id) VALUES (%s, %s, %s)",
+            (event_type, detail or "", client_id),
+        )
+    except Exception as e:
+        logger.debug("log_event(%s) failed: %s", event_type, e)
+
+
+def get_bot_analytics(days=30):
+    """Сводка по событиям бота за период: топ разделов, категории, воронка."""
+    d = str(int(days))
+    out = {"days": int(days)}
+
+    section_labels = {"profile": "Профиль", "doctors": "Врачи", "contacts": "Контакты"}
+    rows = fetchall(
+        "SELECT event_type, COUNT(*) AS n FROM bot_events "
+        "WHERE event_type = ANY(%s) AND created_at >= NOW() - (%s || ' days')::interval "
+        "GROUP BY event_type ORDER BY n DESC",
+        (list(section_labels.keys()), d),
+    )
+    out["sections"] = [{"label": section_labels.get(r["event_type"], r["event_type"]),
+                        "n": int(r["n"])} for r in rows]
+
+    def _distinct(event_type):
+        r = fetchone(
+            "SELECT COUNT(DISTINCT COALESCE(client_id, -id)) AS n FROM bot_events "
+            "WHERE event_type=%s AND created_at >= NOW() - (%s || ' days')::interval",
+            (event_type, d),
+        )
+        return int((r or {}).get("n") or 0)
+
+    starts = _distinct("start")
+    phones = _distinct("phone_confirmed")
+    out["funnel"] = {
+        "starts": starts,
+        "phones": phones,
+        "rate": round(100 * phones / starts) if starts else 0,
+    }
+    return out
+
+
+# ── Кэш сводок YClients ──────────────────────────────────────────────────────────
+
+def get_yc_cache(phone):
+    """Возвращает {'data': json_str, 'age': секунд_с_обновления} или None."""
+    return fetchone(
+        "SELECT data, EXTRACT(EPOCH FROM (NOW() - updated_at)) AS age "
+        "FROM yc_cache WHERE phone = %s",
+        (phone,),
+    )
+
+
+def set_yc_cache(phone, data_json):
+    """Сохраняет/обновляет сводку YClients по телефону (data_json — строка JSON)."""
+    execute(
+        "INSERT INTO yc_cache (phone, data, updated_at) VALUES (%s, %s, NOW()) "
+        "ON CONFLICT (phone) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()",
+        (phone, data_json),
+    )
 
 
 def get_last_incoming_id():
@@ -582,7 +744,7 @@ def get_all_message_templates():
 def save_message_template(key, text):
     execute(
         """INSERT INTO message_templates (key, text) VALUES (%s, %s)
-           ON CONFLICT (key) DO UPDATE SET text=excluded.text""",
+           ON CONFLICT (key) DO UPDATE SET text=EXCLUDED.text""",
         (key, text),
     )
 
@@ -610,7 +772,7 @@ def get_all_chat_templates():
 
 def create_chat_template(name, text):
     row = execute_returning(
-        "INSERT INTO chat_templates (name, text) VALUES (%s, %s)",
+        "INSERT INTO chat_templates (name, text) VALUES (%s, %s) RETURNING id",
         (name, text)
     )
     return row["id"] if row else None
@@ -625,7 +787,7 @@ def delete_chat_template(tpl_id):
 # ── НАПОМИНАНИЯ (дедупликация по id записи YCLIENTS) ───────────────────────────
 
 def yc_reminder_sent(record_id) -> bool:
-    row = fetchone("SELECT 1 AS x FROM yc_reminders_sent WHERE record_id=%s", (record_id,))
+    row = fetchone("SELECT 1 FROM yc_reminders_sent WHERE record_id=%s", (record_id,))
     return bool(row)
 
 
@@ -636,21 +798,45 @@ def mark_yc_reminder_sent(record_id):
     )
 
 
+def yc_booking_notified(record_id) -> bool:
+    row = fetchone("SELECT 1 FROM yc_bookings_notified WHERE record_id=%s", (record_id,))
+    return bool(row)
+
+
+def mark_yc_booking_notified(record_id):
+    execute(
+        "INSERT INTO yc_bookings_notified (record_id) VALUES (%s) ON CONFLICT DO NOTHING",
+        (record_id,),
+    )
+
+
+def yc_booking_seen(record_id) -> bool:
+    row = fetchone("SELECT 1 FROM yc_bookings_seen WHERE record_id=%s", (record_id,))
+    return bool(row)
+
+
+def mark_yc_booking_seen(record_id):
+    execute(
+        "INSERT INTO yc_bookings_seen (record_id) VALUES (%s) ON CONFLICT DO NOTHING",
+        (record_id,),
+    )
+
+
 # ── ДЕНЬ РОЖДЕНИЯ ──────────────────────────────────────────────────────────────
 
 def get_birthday_clients_today():
     """Клиенты с реальным Telegram, у кого сегодня день рождения (по birth_date)."""
     return fetchall("""
         SELECT * FROM clients
-        WHERE tg_id > 0 AND birth_date IS NOT NULL AND birth_date <> ''
-          AND strftime('%m', birth_date) = strftime('%m', 'now', 'localtime')
-          AND strftime('%d', birth_date) = strftime('%d', 'now', 'localtime')
+        WHERE tg_id > 0 AND birth_date IS NOT NULL
+          AND EXTRACT(MONTH FROM birth_date) = EXTRACT(MONTH FROM CURRENT_DATE)
+          AND EXTRACT(DAY   FROM birth_date) = EXTRACT(DAY   FROM CURRENT_DATE)
     """)
 
 
 def birthday_already_sent(client_id, year) -> bool:
     row = fetchone(
-        "SELECT 1 AS x FROM birthday_sent WHERE client_id=%s AND year=%s",
+        "SELECT 1 FROM birthday_sent WHERE client_id=%s AND year=%s",
         (client_id, year),
     )
     return bool(row)
@@ -667,7 +853,8 @@ def mark_birthday_sent(client_id, year):
 
 def init_bot_settings():
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.cursor()
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT 'true'
@@ -691,6 +878,6 @@ def get_setting(key: str) -> bool:
 
 def set_setting(key: str, value: bool):
     execute(
-        "INSERT INTO bot_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value=excluded.value",
+        "INSERT INTO bot_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
         (key, "true" if value else "false")
     )
