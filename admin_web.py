@@ -374,6 +374,89 @@ def api_push_subscribe():
     return jsonify({"ok": True})
 
 
+# ── YClients webhook: мгновенное уведомление клиента о новой записи ────────────
+
+def _parse_yc_dt(value):
+    """'2026-07-01T14:00:00+03:00' / '2026-07-01 14:00:00' → naive datetime (МСК)."""
+    from datetime import datetime as _dt
+    if not value:
+        return None
+    s = str(value).split("+")[0].strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return _dt.strptime(s[:len(fmt) + 2].strip(), fmt)
+        except Exception:
+            pass
+    return None
+
+
+@app.route("/yclients/webhook", methods=["POST"])
+def yclients_webhook():
+    """YClients дёргает этот URL при событиях по записям → мгновенное подтверждение
+    клиенту о созданной записи. Публичный (YClients шлёт без авторизации).
+    Всегда отвечаем 200, чтобы YClients не уходил в бесконечные ретраи."""
+    from datetime import datetime as _dt
+    from templates import render_template
+
+    payload = request.get_json(force=True, silent=True)
+    if payload is None:
+        app.logger.warning("YClients webhook: непарсимый payload: %s",
+                           request.get_data(as_text=True)[:500])
+        return jsonify({"ok": True})
+
+    events = payload if isinstance(payload, list) else [payload]
+    app.logger.info("YClients webhook: событий %s", len(events))  # формат видно в journalctl
+
+    sent = 0
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        if (ev.get("resource") or "").lower() != "record":
+            continue
+        if (ev.get("status") or "").lower() not in ("create", "created"):
+            continue
+        data = ev.get("data") or {}
+        comp = ev.get("company_id") or data.get("company_id")
+        if comp is not None and str(comp) != str(YCLIENTS_COMPANY_ID):
+            continue
+        rid = ev.get("resource_id") or data.get("id")
+        if not rid or db.yc_booking_notified(rid):
+            continue
+
+        cl = data.get("client") or {}
+        phone = cl.get("phone") or data.get("client_phone") or data.get("phone") or ""
+        dt = _parse_yc_dt(data.get("datetime") or data.get("date"))
+        staff = data.get("staff") or {}
+        master = (staff.get("name") or data.get("staff_name") or "").strip()
+        low = master.lower()
+        is_queue = (not master) or ("очеред" in low) or ("лист ожидан" in low)
+
+        # Очередь/лист ожидания/прошедшее время — не уведомляем, только помечаем.
+        if is_queue or not dt or dt < _dt.now():
+            db.mark_yc_booking_notified(rid)
+            continue
+
+        client = db.get_client_by_phone(phone) if phone else None
+        if client and client.get("tg_id") and client["tg_id"] > 0:
+            first = client.get("reg_first_name") or client.get("first_name") or "Уважаемый гость"
+            text = render_template("booking_created", **{
+                "ИМЯ": first, "ДАТА": dt.strftime("%d.%m.%Y"),
+                "ВРЕМЯ": dt.strftime("%H:%M"), "ВРАЧ": master,
+            })
+            try:
+                _tg_api("sendMessage", {"chat_id": client["tg_id"], "text": text,
+                                        "parse_mode": "HTML"})
+                db.save_message(client["id"], "out", text)
+                sent += 1
+            except Exception as e:
+                app.logger.warning("YClients webhook: не отправить (record %s): %s", rid, e)
+        db.mark_yc_booking_notified(rid)
+
+    if sent:
+        app.logger.info("YClients webhook: подтверждений отправлено %s", sent)
+    return jsonify({"ok": True})
+
+
 # ── Base template ─────────────────────────────────────────────────────────────
 
 BASE = r"""<!DOCTYPE html>

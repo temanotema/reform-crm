@@ -1161,13 +1161,10 @@ async def _send_booking_notifications():
             db.mark_yc_booking_notified(rid)
             continue
 
-        # Двухэтапно: при первом появлении записи только запоминаем её и ждём
-        # следующего опроса. Если запись удалили до него — она исчезнет из
-        # списка YCLIENTS и подтверждение не уйдёт.
-        if not db.yc_booking_seen(rid):
-            db.mark_yc_booking_seen(rid)
-            continue
-
+        # Двухэтапную задержку убрали (по решению): уведомляем сразу при
+        # обнаружении. Основной путь — мгновенный вебхук YClients
+        # (/yclients/webhook в панели); этот опрос раз в 5 мин — лишь страховка
+        # на случай пропущенного вебхука. Дедуп общий — yc_bookings_notified.
         phone = rec.get("phone")
         client = db.get_client_by_phone(phone) if phone else None
         if client and client.get("tg_id") and client["tg_id"] > 0:
