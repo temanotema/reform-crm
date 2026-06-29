@@ -19,6 +19,7 @@ import yclients
 from config import (
     ADMIN_PASSWORD, BOT_TOKEN, WEB_PORT, SECRET_KEY, CLINIC_NAME,
     YCLIENTS_COMPANY_ID, YCLIENTS_CLIENT_URL_TEMPLATE, TELEGRAM_PROXY,
+    VAPID_PUBLIC_KEY,
 )
 
 # Прокси для запросов панели к Telegram (если api.telegram.org недоступен напрямую).
@@ -94,6 +95,19 @@ def _service_worker():
     js = """
 self.addEventListener('install', function(e){ self.skipWaiting(); });
 self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()); });
+self.addEventListener('push', function(event){
+  var d={}; try{ d = event.data ? event.data.json() : {}; }catch(e){}
+  var title = d.title || 'Re.form CRM';
+  var opts = {
+    body: d.body || 'Новое сообщение',
+    icon: '/assets/icons/icon-192.png',
+    badge: '/assets/icons/icon-192.png',
+    tag: 'crm-push',
+    renotify: true,
+    data: { url: d.url || '/chats' }
+  };
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
 self.addEventListener('notificationclick', function(event){
   event.notification.close();
   var url = (event.notification.data && event.notification.data.url) || '/chats';
@@ -337,6 +351,27 @@ def require_auth(f):
             return redirect("/login")
         return f(*args, **kwargs)
     return dec
+
+
+# ── Web Push: подписка браузера админа на уведомления ──────────────────────────
+
+@app.route("/api/push/vapid_public")
+@require_auth
+def api_push_vapid_public():
+    return jsonify({"key": VAPID_PUBLIC_KEY})
+
+
+@app.route("/api/push/subscribe", methods=["POST"])
+@require_auth
+def api_push_subscribe():
+    data = request.get_json(silent=True) or {}
+    endpoint = data.get("endpoint")
+    keys = data.get("keys") or {}
+    p256dh, auth = keys.get("p256dh"), keys.get("auth")
+    if not (endpoint and p256dh and auth):
+        return jsonify({"ok": False, "error": "bad subscription"}), 400
+    db.add_push_subscription(endpoint, p256dh, auth)
+    return jsonify({"ok": True})
 
 
 # ── Base template ─────────────────────────────────────────────────────────────
@@ -969,11 +1004,48 @@ function crmPoll(){
   setInterval(tick, 2500);
 }
 
+// Web Push: base64url-ключ → Uint8Array (формат applicationServerKey).
+function urlB64ToUint8(base64){
+  var pad='='.repeat((4-base64.length%4)%4);
+  var b64=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');
+  var raw=atob(b64); var arr=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+// Подписка браузера на Web Push (нужно granted-разрешение). Идемпотентно.
+function setupPush(reg){
+  try{
+    if(!('PushManager' in window)) return;
+    if(!('Notification' in window) || Notification.permission!=='granted') return;
+    fetch('/api/push/vapid_public').then(function(r){return r.json();}).then(function(j){
+      if(!j || !j.key) return;
+      reg.pushManager.getSubscription().then(function(sub){
+        if(sub) return sub;
+        return reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8(j.key)});
+      }).then(function(sub){
+        if(!sub) return;
+        fetch('/api/push/subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(sub)});
+      }).catch(function(e){});
+    }).catch(function(){});
+  }catch(e){}
+}
+
 function crmRealtime(){
   if(!CRM_AUTHED) return;
-  if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('/sw.js'); }catch(e){} }
-  if(('Notification' in window) && Notification.permission==='default'){
-    document.addEventListener('click', function(){ try{Notification.requestPermission();}catch(e){} }, {once:true});
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('/sw.js').then(function(reg){
+      if(!('Notification' in window)) return;
+      if(Notification.permission==='granted'){
+        setupPush(reg);
+      } else if(Notification.permission==='default'){
+        // iOS требует жест пользователя для запроса разрешения — ловим первый клик.
+        document.addEventListener('click', function(){
+          try{
+            Notification.requestPermission().then(function(p){ if(p==='granted') setupPush(reg); });
+          }catch(e){}
+        }, {once:true});
+      }
+    }).catch(function(){});
   }
   crmPoll();  // лёгкий опрос; SSE убран — он держал потоки сервера и всё тормозило
 }

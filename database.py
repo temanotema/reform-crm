@@ -282,6 +282,14 @@ def init_db():
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                endpoint   TEXT PRIMARY KEY,
+                p256dh     TEXT NOT NULL,
+                auth       TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_client  ON messages(client_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)")
@@ -557,6 +565,24 @@ def add_doctor(full_name, title="", photo="", sort_order=0):
         (full_name, title, photo, sort_order),
     )
     return row["id"] if row else None
+
+
+# ── WEB PUSH: подписки браузеров админа ───────────────────────────────────────
+
+def add_push_subscription(endpoint, p256dh, auth):
+    execute(
+        "INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES (%s, %s, %s) "
+        "ON CONFLICT (endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth",
+        (endpoint, p256dh, auth),
+    )
+
+
+def get_push_subscriptions():
+    return fetchall("SELECT endpoint, p256dh, auth FROM push_subscriptions")
+
+
+def delete_push_subscription(endpoint):
+    execute("DELETE FROM push_subscriptions WHERE endpoint=%s", (endpoint,))
 
 
 # ── MESSAGES ──────────────────────────────────────────────────────────────────

@@ -87,6 +87,16 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "temanotema/reform-crm")
 SENTRY_DSN         = os.getenv("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "local")   # на сервере поставь "production"
 
+# ── Web Push (уведомления админам на телефон/в браузер, даже когда панель закрыта) ─
+# VAPID-ключи. Публичный держим в коде (он и так уходит в браузер при подписке),
+# приватный — СЕКРЕТ, только в config_local.py. ОДИН И ТОТ ЖЕ набор ключей должен
+# стоять и локально, и на сервере (подписка в браузере привязана к публичному ключу).
+VAPID_PUBLIC_KEY  = os.getenv(
+    "VAPID_PUBLIC_KEY",
+    "BJo9T_2hRE3BTgPybZFggbtnOm8sCDcQFGCz9xNBVhfTi5GEBh4TFllB50gvEs346zyRzfieB0QTAYWG6JukXs8")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")   # СЕКРЕТ — задать в config_local.py
+VAPID_CLAIM_EMAIL = os.getenv("VAPID_CLAIM_EMAIL", "mailto:re.form.cosmetology1@gmail.com")
+
 
 # ── Локальные секреты (НЕ в git) ──────────────────────────────────────────────
 # config_local.py переопределяет значения выше реальными данными.

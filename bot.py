@@ -31,6 +31,9 @@ from templates import render_template
 # ── Интеграция с YCLIENTS ─────────────────────────────────────────────────────
 import yclients
 
+# ── Web Push (уведомления админам на телефон) ─────────────────────────────────
+import webpush
+
 logger = logging.getLogger(__name__)
 
 # Если задан TELEGRAM_PROXY — весь трафик бота к api.telegram.org идёт через него
@@ -923,6 +926,17 @@ SYSTEM_BUTTONS = {"📢 Рассылка", PROFILE_BUTTON, DOCTORS_BUTTON, CONTA
                   SKIP_BUTTON}
 
 
+async def _push_new_message(name: str, preview: str, client_id: int):
+    """Web Push админам о новом сообщении клиента. pywebpush синхронный — гоняем
+    в отдельном потоке, чтобы не блокировать event loop бота."""
+    try:
+        await asyncio.to_thread(
+            webpush.send_push_to_admins,
+            f"💬 {name}", (preview or "Новое сообщение")[:140], f"/chats/{client_id}")
+    except Exception as e:
+        logger.warning("Web Push trigger: %s", e)
+
+
 @dp.message(F.text)
 async def incoming_message(message: types.Message, state: FSMContext):
     if message.text in SYSTEM_BUTTONS:
@@ -953,6 +967,7 @@ async def incoming_message(message: types.Message, state: FSMContext):
             await bot.send_message(admin_id, note)
         except Exception:
             pass
+    await _push_new_message(name, message.text, client["id"])
 
     # Если номер ещё не подтверждён — мягко просим поделиться им (но сообщение
     # админу уже ушло). Для зарегистрированных — ничего лишнего.
@@ -1026,6 +1041,7 @@ async def incoming_media(message: types.Message, state: FSMContext):
             await bot.send_message(admin_id, note)
         except Exception:
             pass
+    await _push_new_message(name, note_label + (f": {caption}" if caption else ""), client["id"])
 
     if message.from_user.id not in ADMIN_IDS and not (client.get("phone") or "").strip():
         await message.answer(
