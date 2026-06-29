@@ -390,13 +390,17 @@ def _parse_yc_dt(value):
     return None
 
 
-@app.route("/yclients/webhook", methods=["POST"])
+@app.route("/yclients/webhook", methods=["GET", "POST"])
 def yclients_webhook():
     """YClients дёргает этот URL при событиях по записям → мгновенное подтверждение
     клиенту о созданной записи. Публичный (YClients шлёт без авторизации).
     Всегда отвечаем 200, чтобы YClients не уходил в бесконечные ретраи."""
     from datetime import datetime as _dt
     from templates import render_template
+
+    if request.method == "GET":
+        # Проверка «живости» из браузера. Реальные события приходят через POST.
+        return jsonify({"ok": True, "info": "YClients webhook endpoint — принимает POST"})
 
     payload = request.get_json(force=True, silent=True)
     if payload is None:

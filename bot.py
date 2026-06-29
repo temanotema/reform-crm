@@ -1191,14 +1191,15 @@ async def _send_booking_notifications():
 
 
 async def _booking_loop():
-    """Проверяет новые записи чаще основного планировщика — каждые 5 минут."""
+    """Проверяет новые записи каждые 2 минуты (запасной путь; основной —
+    мгновенный вебхук YClients). Чаще делать не стоит — лишняя нагрузка на API."""
     await asyncio.sleep(25)  # дать боту подняться
     while True:
         try:
             await _send_booking_notifications()
         except Exception as e:
             logger.warning("booking loop error: %s", e)
-        await asyncio.sleep(300)
+        await asyncio.sleep(120)
 
 
 # Сколько дней храним медиа из чатов, потом авто-удаляем (чтобы диск не забивался).
