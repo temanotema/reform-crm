@@ -999,6 +999,8 @@ function renderMsgMedia(m){
 function _fmtT(s){ s=Math.max(0,Math.floor(s||0)); return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2); }
 function initMediaPlayers(root){
   root = root || document;
+  if(!root || !root.querySelectorAll) return;
+  try{
   // ── Голосовые ──
   var voices = root.querySelectorAll('.voice:not(.ready)');
   Array.prototype.forEach.call(voices, function(box){
@@ -1060,6 +1062,7 @@ function initMediaPlayers(root){
     });
     vid.addEventListener('ended', function(){ box.classList.remove('playing'); ring.style.strokeDashoffset=C; try{vid.currentTime=0.05;}catch(e){} });
   });
+  }catch(e){ if(window.console) console.warn('initMediaPlayers:', e); }
 }
 // Авто-подпись медиа («📷 Фото» и т.п.) нужна только для превью в списке диалогов,
 // в самом пузыре её показывать не нужно — фото/файл и так видны.
