@@ -394,7 +394,7 @@ def api_push_subscribe():
     p256dh, auth = keys.get("p256dh"), keys.get("auth")
     if not (endpoint and p256dh and auth):
         return jsonify({"ok": False, "error": "bad subscription"}), 400
-    db.add_push_subscription(endpoint, p256dh, auth)
+    db.add_push_subscription(endpoint, p256dh, auth, admin_id=session.get("admin_id"))
     return jsonify({"ok": True})
 
 
@@ -496,7 +496,7 @@ BASE = r"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<script>(function(){document.documentElement.setAttribute('data-theme','{{ session.get("theme") or "light" }}');window.CRM_WP='{{ session.get("wallpaper") or "default" }}';})();</script>
+<script>(function(){document.documentElement.setAttribute('data-theme','{{ session.get("theme") or "light" }}');window.CRM_WP='{{ session.get("wallpaper") or "default" }}';window.CRM_NOTIFY={{ 'true' if session.get('notify', True) else 'false' }};})();</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/assets/icons/icon-192.png">
@@ -955,6 +955,9 @@ tr:hover td{background:var(--hover)}
     <button class="theme-btn" id="themeToggle" onclick="toggleTheme()">
       <i id="themeIcon" class="ti ti-moon"></i><span id="themeLabel">Тёмная тема</span>
     </button>
+    <button class="theme-btn" id="notifyToggle" onclick="toggleNotify()">
+      <i id="notifyIcon" class="ti ti-bell"></i><span id="notifyLabel">Уведомления</span>
+    </button>
     {% if session.get('is_super') %}<a href="/adm"><i class="ti ti-shield-lock"></i> Контроль доступа</a>{% endif %}
     <a href="/logout"><i class="ti ti-logout"></i> Выйти</a>
   </div>
@@ -993,6 +996,19 @@ function toggleTheme(){
   applyTheme(cur === 'dark' ? 'light' : 'dark', true);
 }
 applyTheme(document.documentElement.getAttribute('data-theme') || 'light', false);
+function applyNotifyUI(){
+  var on = window.CRM_NOTIFY !== false;
+  var icon = document.getElementById('notifyIcon');
+  var label = document.getElementById('notifyLabel');
+  if(icon) icon.className = on ? 'ti ti-bell' : 'ti ti-bell-off';
+  if(label) label.textContent = on ? 'Уведомления: вкл' : 'Уведомления: выкл';
+}
+function toggleNotify(){
+  window.CRM_NOTIFY = (window.CRM_NOTIFY === false);  // переключаем вкл/выкл
+  applyNotifyUI();
+  savePref('notify', window.CRM_NOTIFY);   // сохраняем в аккаунт (и гасит/включает Web Push)
+}
+applyNotifyUI();
 function showToast(msg, type){
   var t = document.getElementById('toast');
   t.textContent = msg;
@@ -1200,7 +1216,7 @@ function crmHandle(p){
   if(!p) return;
   crmGotData = true;
   crmBadge(p.dialogs||0);
-  if(crmLastIncoming!==null && p.incoming_id>crmLastIncoming){
+  if(crmLastIncoming!==null && p.incoming_id>crmLastIncoming && window.CRM_NOTIFY !== false){
     crmDing();
     crmNotify(p);
     if(!(window.activeId && window.activeId === p.client_id)){ crmPush(p); }
@@ -1340,6 +1356,7 @@ def login():
                 session["is_super"] = bool(user.get("is_super"))
                 session["theme"] = user.get("theme") or "light"
                 session["wallpaper"] = user.get("wallpaper") or "default"
+                session["notify"] = bool(user.get("notify"))
                 _login_fails.pop(ip, None)
                 return redirect("/chats")
             cnt += 1
@@ -1577,6 +1594,10 @@ def api_me_prefs():
     if "wallpaper" in data:
         db.set_admin_pref(aid, "wallpaper", data["wallpaper"])
         session["wallpaper"] = data["wallpaper"]
+    if "notify" in data:
+        on = bool(data["notify"])
+        db.set_admin_notify(aid, on)
+        session["notify"] = on
     return jsonify({"ok": True})
 
 

@@ -315,10 +315,13 @@ def init_db():
         token         TEXT DEFAULT '',
         theme         TEXT DEFAULT 'light',
         wallpaper     TEXT DEFAULT 'default',
+        notify        BOOLEAN DEFAULT TRUE,
         created_at    TIMESTAMPTZ DEFAULT NOW()
     )""")
     _safe_alter("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'light'")
     _safe_alter("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS wallpaper TEXT DEFAULT 'default'")
+    _safe_alter("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS notify BOOLEAN DEFAULT TRUE")
+    _safe_alter("ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS admin_id INT")
     # Супер-админ = текущий логин/пароль из config (создаётся один раз, пароль не перезаписывается).
     try:
         import config as _cfg
@@ -591,16 +594,22 @@ def add_doctor(full_name, title="", photo="", sort_order=0):
 
 # ── WEB PUSH: подписки браузеров админа ───────────────────────────────────────
 
-def add_push_subscription(endpoint, p256dh, auth):
+def add_push_subscription(endpoint, p256dh, auth, admin_id=None):
     execute(
-        "INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES (%s, %s, %s) "
-        "ON CONFLICT (endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth",
-        (endpoint, p256dh, auth),
+        "INSERT INTO push_subscriptions (endpoint, p256dh, auth, admin_id) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, admin_id=EXCLUDED.admin_id",
+        (endpoint, p256dh, auth, admin_id),
     )
 
 
 def get_push_subscriptions():
-    return fetchall("SELECT endpoint, p256dh, auth FROM push_subscriptions")
+    # Шлём только тем, у кого уведомления включены (notify=TRUE) и аккаунт активен.
+    # Подписки без admin_id (старые) шлём всегда — их не к чему привязать.
+    return fetchall(
+        "SELECT ps.endpoint, ps.p256dh, ps.auth FROM push_subscriptions ps "
+        "LEFT JOIN admin_users a ON a.id = ps.admin_id "
+        "WHERE ps.admin_id IS NULL OR (a.notify = TRUE AND a.is_active = TRUE)"
+    )
 
 
 def delete_push_subscription(endpoint):
@@ -726,11 +735,13 @@ def logout_all_admins():
 
 
 def get_admin_prefs(admin_id):
-    """Личные настройки админа (тема, обои) — хранятся в аккаунте, а не в браузере."""
+    """Личные настройки админа (тема, обои, уведомления) — в аккаунте, а не в браузере."""
     a = get_admin(admin_id)
     if not a:
-        return {"theme": "light", "wallpaper": "default"}
-    return {"theme": a.get("theme") or "light", "wallpaper": a.get("wallpaper") or "default"}
+        return {"theme": "light", "wallpaper": "default", "notify": True}
+    return {"theme": a.get("theme") or "light",
+            "wallpaper": a.get("wallpaper") or "default",
+            "notify": bool(a.get("notify"))}
 
 
 def set_admin_pref(admin_id, key, value):
@@ -738,6 +749,11 @@ def set_admin_pref(admin_id, key, value):
     if key not in ("theme", "wallpaper"):
         return
     execute(f"UPDATE admin_users SET {key}=%s WHERE id=%s", ((value or "")[:32], admin_id))
+
+
+def set_admin_notify(admin_id, on):
+    """Вкл/выкл уведомления для аккаунта (выходной → выкл: ни пуша, ни звука нигде)."""
+    execute("UPDATE admin_users SET notify=%s WHERE id=%s", (bool(on), admin_id))
 
 
 def admin_message_stats(period=None):
