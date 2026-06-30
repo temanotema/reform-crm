@@ -1711,6 +1711,7 @@ async function loadChat(id){
 
     var ci = document.querySelector('.ci[data-id="'+id+'"] [data-unread]');
     if(ci){ ci.style.display = 'none'; ci.textContent = ''; }
+    refreshHdrUnread();   // сразу пересчитать бейдж диалогов (не ждать опроса/скролла)
   } catch(e){ clearTimeout(skTimer); }
 }
 
@@ -2134,6 +2135,27 @@ function buildDialogEl(d){
   return el;
 }
 
+// Бейдж у колокольчика = число непрочитанных ДИАЛОГОВ (а не сообщений), без активного.
+// Считаем по DOM, поэтому обновляется мгновенно (при входе в чат бейдж диалога прячется).
+function refreshHdrUnread(){
+  var n = 0;
+  document.querySelectorAll('.ci').forEach(function(el){
+    if(parseInt(el.dataset.id, 10) === activeId) return;
+    var u = el.querySelector('[data-unread]');
+    if(u && u.style.display !== 'none' && (u.textContent || '').trim() !== '') n++;
+  });
+  var right = document.getElementById('dlgHdrRight');
+  var badge = right ? right.querySelector('.unread') : null;
+  if(!badge && n > 0 && right){
+    right.insertAdjacentHTML('afterbegin', '<span class="unread"></span>');
+    badge = right.querySelector('.unread');
+  }
+  if(badge){
+    if(n > 0){ badge.style.display = ''; badge.textContent = n; }
+    else badge.style.display = 'none';
+  }
+}
+
 async function syncDialogs(){
   try{
     var r = await fetch('/api/dialogs');
@@ -2165,16 +2187,7 @@ async function syncDialogs(){
     });
     colorizeAvatars();
     applyDialogFilter();
-    var total = list.reduce(function(s,d){ return s + (d.id === activeId ? 0 : (d.unread_count||0)); }, 0);
-    var badge = document.querySelector('#dlgHdrRight .unread');
-    if(badge){
-      if(total > 0){ badge.style.display = ''; badge.textContent = total; }
-      else badge.style.display = 'none';
-    } else if(total > 0){
-      // вставляем бейдж ВНУТРЬ правого блока, перед колокольчиком (а не в конец шапки)
-      var right = document.getElementById('dlgHdrRight');
-      if(right) right.insertAdjacentHTML('afterbegin', '<span class="unread">'+total+'</span>');
-    }
+    refreshHdrUnread();
   } catch(e){}
 }
 
@@ -2360,7 +2373,8 @@ def chats(client_id=None):
         active_client = db.get_client(client_id)
         messages = db.get_messages(client_id)
         db.mark_messages_read(client_id)
-    total_unread = db.get_total_unread()
+    # бейдж у колокольчика = число непрочитанных ДИАЛОГОВ (активный уже помечен прочитанным выше)
+    total_unread = db.get_unread_summary()["dialogs"]
     return render(CHATS_TPL, title="Чаты", active="chats",
                   clients=clients, active_client=active_client,
                   messages=messages, active_id=client_id,
