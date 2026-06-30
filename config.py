@@ -104,6 +104,11 @@ VAPID_CLAIM_EMAIL = os.getenv("VAPID_CLAIM_EMAIL", "mailto:re.form.cosmetology1@
 QUIET_HOURS_START = int(os.getenv("QUIET_HOURS_START", "22"))   # с 22:00
 QUIET_HOURS_END   = int(os.getenv("QUIET_HOURS_END",   "10"))   # до 10:00
 
+# ── Супер-админ панель /adm ───────────────────────────────────────────────────
+# 4-значный PIN для входа на /adm (вторая защита поверх логина супер-админа).
+# ОБЯЗАТЕЛЬНО задать свой в config_local.py!
+ADMIN_PIN = str(os.getenv("ADMIN_PIN", "0000"))
+
 
 # ── Локальные секреты (НЕ в git) ──────────────────────────────────────────────
 # config_local.py переопределяет значения выше реальными данными.

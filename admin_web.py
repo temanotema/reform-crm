@@ -337,18 +337,42 @@ def _message_to_json(m):
         "created_at": m["created_at"].strftime("%d.%m %H:%M"),
         "media_type": m.get("media_type"),
         "media_filename": m.get("media_filename"),
+        "sent_by": m.get("sent_by"),
         "has_media": bool(m.get("media_type") or m.get("media_file_id") or m.get("media_local_path")),
     }
 
 
 # ── Auth decorator ─────────────────────────────────────────────────────────────
 
+def _session_admin_ok():
+    """Сессия валидна, только если аккаунт активен и токен совпадает (force-logout/смена пароля
+    аннулируют все его сессии). Старые сессии без admin_id считаем недействительными."""
+    if not session.get("admin"):
+        return False
+    aid = session.get("admin_id")
+    return bool(aid) and db.admin_token_valid(aid, session.get("admin_token"))
+
+
 def require_auth(f):
     from functools import wraps
     @wraps(f)
     def dec(*args, **kwargs):
-        if not session.get("admin"):
+        if not _session_admin_ok():
+            session.clear()
             return redirect("/login")
+        return f(*args, **kwargs)
+    return dec
+
+
+def require_super(f):
+    from functools import wraps
+    @wraps(f)
+    def dec(*args, **kwargs):
+        if not _session_admin_ok():
+            session.clear()
+            return redirect("/login")
+        if not session.get("is_super"):
+            return redirect("/chats")
         return f(*args, **kwargs)
     return dec
 
@@ -775,6 +799,7 @@ input[type=color]{padding:3px 6px;height:36px;width:52px;cursor:pointer}
 .msg.system{background:var(--hover);border:1px dashed var(--border);font-size:12px;
   color:var(--text-sec);text-align:center}
 .msg .mtime{font-size:11px;opacity:.72;margin-top:4px;display:block;text-align:right}
+.msg .msig{font-weight:600;opacity:.95}
 .msg-media{margin-bottom:6px;border-radius:8px;overflow:hidden;max-width:280px;line-height:0}
 .msg-media img,.msg-media video{display:block;max-width:280px;max-height:360px;width:auto;height:auto;
   border-radius:8px;cursor:pointer;object-fit:contain}
@@ -930,6 +955,7 @@ tr:hover td{background:var(--hover)}
     <button class="theme-btn" id="themeToggle" onclick="toggleTheme()">
       <i id="themeIcon" class="ti ti-moon"></i><span id="themeLabel">Тёмная тема</span>
     </button>
+    {% if session.get('is_super') %}<a href="/adm"><i class="ti ti-shield-lock"></i> Контроль доступа</a>{% endif %}
     <a href="/logout"><i class="ti ti-logout"></i> Выйти</a>
   </div>
 </div>
@@ -1082,9 +1108,10 @@ function renderMsg(m, animate){
   var cls = m.direction === 'system' ? 'system' : m.direction;
   var anim = animate ? ' msg-new' : '';
   var showText = m.text && !isAutoMediaLabel(m);
+  var sig = (m.direction === 'out' && m.sent_by) ? '<span class="msig">'+esc(m.sent_by)+'</span> · ' : '';
   return '<div class="msg-wrap '+cls+anim+'" data-msg-id="'+m.id+'"><div class="msg '+cls+'">' +
     renderMsgMedia(m) + (showText ? '<span class="mtext">'+esc(m.text)+'</span>' : '') +
-    '<span class="mtime">'+m.created_at+'</span></div></div>';
+    '<span class="mtime">'+sig+m.created_at+'</span></div></div>';
 }
 
 // ── Реалтайм: бейдж непрочитанных + звук + уведомления (SSE с откатом на опрос) ──
@@ -1295,15 +1322,15 @@ def login():
         if until > now:
             err = "Слишком много попыток. Подождите пару минут."
         else:
-            ok_login = hmac.compare_digest(
-                request.form.get("login", "").strip().encode(),
-                (getattr(config, "ADMIN_LOGIN", "admin") or "").encode())
-            ok_pass = hmac.compare_digest(
-                request.form.get("password", "").encode(),
-                (ADMIN_PASSWORD or "").encode())
-            if ok_login and ok_pass:
+            user = db.verify_admin(request.form.get("login", ""),
+                                   request.form.get("password", ""))
+            if user:
                 session.permanent = True
                 session["admin"] = True
+                session["admin_id"] = user["id"]
+                session["admin_token"] = user.get("token")
+                session["admin_name"] = user.get("name") or user["login"]
+                session["is_super"] = bool(user.get("is_super"))
                 _login_fails.pop(ip, None)
                 return redirect("/chats")
             cnt += 1
@@ -1320,6 +1347,199 @@ def login():
 def logout():
     session.clear()
     return redirect("/login")
+
+
+# ── /adm — скрытая панель супер-админа (управление аккаунтами) ─────────────────
+
+ADM_PIN_TPL = """
+<div class="adm-pin">
+  <div class="adm-pin-card">
+    <div style="font-size:30px">🔒</div>
+    <h2 style="margin:8px 0 4px">Контроль доступа</h2>
+    <p style="color:var(--text-sec);margin:0 0 14px">Введите PIN-код</p>
+    {% if err %}<div style="color:var(--red);margin-bottom:10px">{{ err }}</div>{% endif %}
+    <form method="post" action="/adm/pin">
+      <input name="pin" type="password" inputmode="numeric" maxlength="4" autofocus
+             class="adm-pin-inp" placeholder="••••">
+      <button class="adm-go" type="submit">Войти</button>
+    </form>
+  </div>
+</div>
+<style>
+.adm-pin{display:flex;justify-content:center;padding:60px 16px}
+.adm-pin-card{background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:30px;max-width:340px;width:100%;text-align:center;box-shadow:var(--shadow)}
+.adm-pin-inp{width:140px;text-align:center;letter-spacing:10px;font-size:24px;padding:10px;
+  border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)}
+.adm-go{display:block;width:100%;margin-top:14px;padding:11px;border:none;border-radius:10px;
+  background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+</style>
+"""
+
+ADM_TPL = """
+<div class="scroll-page" style="max-width:920px;margin:0 auto;padding:18px">
+  <h1 style="margin:0 0 4px">Контроль доступа</h1>
+  <p style="color:var(--text-sec);margin:0 0 18px">Кабинеты сотрудников, разлогин и аналитика. Видно только супер-админу.</p>
+
+  <div class="adm-sec">
+    <div class="adm-h">Аккаунты</div>
+    <table class="adm-tbl">
+      <tr><th>Имя</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Действия</th></tr>
+      {% for a in admins %}
+      <tr>
+        <td>{{ a.name or '—' }}</td>
+        <td>{{ a.login }}</td>
+        <td>{% if a.is_super %}<b>Супер-админ</b>{% else %}Админ{% endif %}</td>
+        <td>{% if a.is_active %}<span style="color:var(--green,#2e9e5b)">активен</span>{% else %}<span style="color:var(--red)">выключен</span>{% endif %}</td>
+        <td>
+          {% if a.is_super %}
+            <span style="color:var(--text-sec)">— это вы</span>
+          {% else %}
+          <div class="adm-acts">
+            <form method="post" action="/adm/{{a.id}}/password" class="adm-f">
+              <input name="password" type="text" class="adm-inp" placeholder="новый пароль">
+              <button class="adm-btn">Пароль</button>
+            </form>
+            <form method="post" action="/adm/{{a.id}}/logout" class="adm-f">
+              <button class="adm-btn">Разлогинить</button></form>
+            <form method="post" action="/adm/{{a.id}}/active" class="adm-f">
+              <input type="hidden" name="active" value="{{ 0 if a.is_active else 1 }}">
+              <button class="adm-btn">{{ 'Выключить' if a.is_active else 'Включить' }}</button></form>
+            <form method="post" action="/adm/{{a.id}}/delete" class="adm-f"
+                  onsubmit="return confirm('Удалить аккаунт {{a.login}} навсегда?')">
+              <button class="adm-btn adm-danger">Удалить</button></form>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="adm-sec">
+    <div class="adm-h">Добавить аккаунт</div>
+    <form method="post" action="/adm/create" class="adm-create">
+      <input name="name" placeholder="Имя (для подписи)" class="adm-inp" required>
+      <input name="login" placeholder="Логин" class="adm-inp" autocomplete="off" required>
+      <input name="password" placeholder="Пароль" class="adm-inp" autocomplete="new-password" required>
+      <button class="adm-btn adm-primary">Создать</button>
+    </form>
+    <p style="color:var(--text-sec);font-size:12px;margin:8px 0 0">Сотрудник входит на той же странице входа своим логином и паролем. Его сообщения подписываются именем.</p>
+  </div>
+
+  <div class="adm-sec">
+    <div class="adm-h">Сообщения по админам</div>
+    <table class="adm-tbl">
+      <tr><th>Админ</th><th>Неделя</th><th>Месяц</th><th>Всё время</th></tr>
+      {% for s in stats %}
+      <tr><td>{{ s.name }}</td><td>{{ s.week }}</td><td>{{ s.month }}</td><td>{{ s['all'] }}</td></tr>
+      {% else %}
+      <tr><td colspan="4" style="color:var(--text-sec)">Пока нет отправленных сообщений с подписью.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+<style>
+.adm-sec{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px}
+.adm-h{font-weight:700;margin-bottom:10px}
+.adm-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.adm-tbl th{text-align:left;color:var(--text-sec);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border)}
+.adm-tbl td{padding:8px;border-bottom:1px solid var(--border);vertical-align:middle}
+.adm-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.adm-f{display:inline-flex;gap:4px;margin:0}
+.adm-inp{padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}
+.adm-btn{padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;cursor:pointer}
+.adm-btn:hover{background:var(--hover)}
+.adm-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.adm-danger{color:var(--red);border-color:var(--red)}
+.adm-create{display:flex;flex-wrap:wrap;gap:8px}
+.adm-create .adm-inp{flex:1;min-width:150px}
+</style>
+"""
+
+
+def _adm_pin_required():
+    return bool(config.ADMIN_PIN) and not session.get("adm_pin_ok")
+
+
+def _adm_action_target(admin_id):
+    """Цель действия должна существовать и НЕ быть супер-админом (защита от самоблокировки)."""
+    t = db.get_admin(admin_id)
+    return t if (t and not t.get("is_super")) else None
+
+
+@app.route("/adm")
+@require_super
+def adm_home():
+    if _adm_pin_required():
+        return render(ADM_PIN_TPL, title="Контроль", active="", err="")
+    wk = {r["name"]: r["n"] for r in db.admin_message_stats("week")}
+    mo = {r["name"]: r["n"] for r in db.admin_message_stats("month")}
+    stats = [{"name": r["name"], "week": wk.get(r["name"], 0),
+              "month": mo.get(r["name"], 0), "all": r["n"]}
+             for r in db.admin_message_stats(None)]
+    return render(ADM_TPL, title="Контроль доступа", active="",
+                  admins=db.get_all_admins(), stats=stats)
+
+
+@app.route("/adm/pin", methods=["POST"])
+@require_super
+def adm_pin():
+    pin = (request.form.get("pin") or "").strip()
+    if pin and hmac.compare_digest(pin, str(config.ADMIN_PIN)):
+        session["adm_pin_ok"] = True
+        return redirect("/adm")
+    return render(ADM_PIN_TPL, title="Контроль", active="", err="Неверный PIN")
+
+
+@app.route("/adm/create", methods=["POST"])
+@require_super
+def adm_create():
+    if _adm_pin_required():
+        return redirect("/adm")
+    db.create_admin(request.form.get("login", ""), request.form.get("password", ""),
+                    request.form.get("name", ""), is_super=False)
+    return redirect("/adm")
+
+
+@app.route("/adm/<int:admin_id>/password", methods=["POST"])
+@require_super
+def adm_password(admin_id):
+    if _adm_pin_required():
+        return redirect("/adm")
+    if _adm_action_target(admin_id):
+        db.set_admin_password(admin_id, request.form.get("password", ""))
+    return redirect("/adm")
+
+
+@app.route("/adm/<int:admin_id>/logout", methods=["POST"])
+@require_super
+def adm_force_logout(admin_id):
+    if _adm_pin_required():
+        return redirect("/adm")
+    if _adm_action_target(admin_id):
+        db.force_logout_admin(admin_id)
+    return redirect("/adm")
+
+
+@app.route("/adm/<int:admin_id>/active", methods=["POST"])
+@require_super
+def adm_active(admin_id):
+    if _adm_pin_required():
+        return redirect("/adm")
+    if _adm_action_target(admin_id):
+        db.set_admin_active(admin_id, request.form.get("active") == "1")
+    return redirect("/adm")
+
+
+@app.route("/adm/<int:admin_id>/delete", methods=["POST"])
+@require_super
+def adm_delete(admin_id):
+    if _adm_pin_required():
+        return redirect("/adm")
+    if _adm_action_target(admin_id):
+        db.delete_admin(admin_id)
+    return redirect("/adm")
 
 
 @app.route("/")
@@ -1514,7 +1734,7 @@ CHATS_TPL = """
             {% endif %}
             {% set _auto = m.media_type and (m.text == '📷 Фото' or m.text == '🎬 Видео' or (m.media_type == 'audio' and m.text == '🎤 Голосовое') or (m.media_type == 'video_note' and m.text == '⭕ Видеокружок') or (m.media_type == 'document' and m.text == '📎 ' ~ (m.media_filename or ''))) %}
             {% if m.text and not _auto %}<span class="mtext">{{ m.text|e }}</span>{% endif %}
-            <span class="mtime">{{m.created_at.strftime('%d.%m %H:%M')}}</span>
+            <span class="mtime">{% if m.direction == 'out' and m.sent_by %}<span class="msig">{{ m.sent_by|e }}</span> · {% endif %}{{m.created_at.strftime('%d.%m %H:%M')}}</span>
           </div>
         </div>
         {% endfor %}
@@ -3171,7 +3391,7 @@ def api_send(client_id):
         db.save_message(
             client_id, "out", display_text,
             media_type=media_type, media_filename=raw_name,
-            media_local_path=unique_name,
+            media_local_path=unique_name, sent_by=session.get("admin_name"),
         )
         return jsonify({"ok": True, "warning": warning})
 
@@ -3190,7 +3410,7 @@ def api_send(client_id):
     else:
         warning = "У клиента нет Telegram — сохранено только в CRM"
 
-    db.save_message(client_id, "out", text)
+    db.save_message(client_id, "out", text, sent_by=session.get("admin_name"))
     return jsonify({"ok": True, "warning": warning})
 
 

@@ -304,6 +304,24 @@ def init_db():
     _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_file_id TEXT")
     _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_filename TEXT")
     _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_local_path TEXT")
+    _safe_alter("ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_by TEXT")  # имя админа-отправителя
+    _safe_alter("""CREATE TABLE IF NOT EXISTS admin_users (
+        id            SERIAL PRIMARY KEY,
+        login         TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        name          TEXT DEFAULT '',
+        is_super      BOOLEAN DEFAULT FALSE,
+        is_active     BOOLEAN DEFAULT TRUE,
+        token         TEXT DEFAULT '',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+    )""")
+    # Супер-админ = текущий логин/пароль из config (создаётся один раз, пароль не перезаписывается).
+    try:
+        import config as _cfg
+        seed_super_admin(getattr(_cfg, "ADMIN_LOGIN", "admin"),
+                         getattr(_cfg, "ADMIN_PASSWORD", ""), "Супер-админ")
+    except Exception as e:
+        logger.warning("seed super admin: %s", e)
     _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE")
     _safe_alter("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'")
     _safe_alter("ALTER TABLE clients ADD COLUMN IF NOT EXISTS patronymic TEXT DEFAULT ''")
@@ -588,15 +606,119 @@ def delete_push_subscription(endpoint):
 # ── MESSAGES ──────────────────────────────────────────────────────────────────
 
 def save_message(client_id, direction, text, media_type=None, media_file_id=None,
-                 media_filename=None, media_local_path=None):
+                 media_filename=None, media_local_path=None, sent_by=None):
     execute_returning(
         """INSERT INTO messages
-           (client_id, direction, text, media_type, media_file_id, media_filename, media_local_path)
-           VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-        (client_id, direction, text, media_type, media_file_id, media_filename, media_local_path),
+           (client_id, direction, text, media_type, media_file_id, media_filename, media_local_path, sent_by)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+        (client_id, direction, text, media_type, media_file_id, media_filename, media_local_path, sent_by),
     )
     if direction == "in":
         execute("UPDATE clients SET unread_count = unread_count + 1 WHERE id=%s", (client_id,))
+
+
+# ── ADMIN USERS (мультиадмин + супер-админ) ───────────────────────────────────
+
+import secrets as _secrets
+from werkzeug.security import generate_password_hash as _hash_pw, check_password_hash as _check_pw
+
+
+def _new_admin_token():
+    return _secrets.token_hex(16)
+
+
+def seed_super_admin(login, password, name="Супер-админ"):
+    """Создаёт супер-админа при первом запуске, если его ещё нет. Пароль НЕ перезаписывает."""
+    if not login or not password:
+        return
+    if get_admin_by_login(login):
+        return
+    execute(
+        """INSERT INTO admin_users (login, password_hash, name, is_super, is_active, token)
+           VALUES (%s,%s,%s,TRUE,TRUE,%s) ON CONFLICT (login) DO NOTHING""",
+        (login, _hash_pw(password), name, _new_admin_token()),
+    )
+
+
+def get_admin_by_login(login):
+    return fetchone("SELECT * FROM admin_users WHERE login=%s", (login,))
+
+
+def get_admin(admin_id):
+    return fetchone("SELECT * FROM admin_users WHERE id=%s", (admin_id,))
+
+
+def get_all_admins():
+    return fetchall("SELECT * FROM admin_users ORDER BY is_super DESC, name, login")
+
+
+def verify_admin(login, password):
+    """Возвращает строку админа, если логин+пароль верны и аккаунт активен, иначе None."""
+    a = get_admin_by_login((login or "").strip())
+    if a and a.get("is_active") and _check_pw(a["password_hash"], password or ""):
+        return a
+    return None
+
+
+def admin_token_valid(admin_id, token):
+    a = get_admin(admin_id)
+    return bool(a and a.get("is_active") and token and a.get("token") == token)
+
+
+def create_admin(login, password, name, is_super=False):
+    """Создаёт аккаунт. Возвращает id или None, если логин занят/данные пустые."""
+    login = (login or "").strip()
+    if not login or not password:
+        return None
+    if get_admin_by_login(login):
+        return None
+    row = execute_returning(
+        """INSERT INTO admin_users (login, password_hash, name, is_super, is_active, token)
+           VALUES (%s,%s,%s,%s,TRUE,%s) RETURNING id""",
+        (login, _hash_pw(password), (name or "").strip(), bool(is_super), _new_admin_token()),
+    )
+    return row["id"] if row else None
+
+
+def delete_admin(admin_id):
+    execute("DELETE FROM admin_users WHERE id=%s AND is_super=FALSE", (admin_id,))
+
+
+def set_admin_password(admin_id, password):
+    """Меняет пароль и ротирует токен — все текущие сессии админа аннулируются."""
+    if not password:
+        return
+    execute("UPDATE admin_users SET password_hash=%s, token=%s WHERE id=%s",
+            (_hash_pw(password), _new_admin_token(), admin_id))
+
+
+def set_admin_name(admin_id, name):
+    execute("UPDATE admin_users SET name=%s WHERE id=%s", ((name or "").strip(), admin_id))
+
+
+def set_admin_active(admin_id, active):
+    """Вкл/выкл аккаунт. Выключение + ротация токена = моментальный разлогин и блок входа."""
+    execute("UPDATE admin_users SET is_active=%s, token=%s WHERE id=%s",
+            (bool(active), _new_admin_token(), admin_id))
+
+
+def force_logout_admin(admin_id):
+    """Ротирует токен — текущие сессии админа становятся недействительными (вход остаётся)."""
+    execute("UPDATE admin_users SET token=%s WHERE id=%s", (_new_admin_token(), admin_id))
+
+
+def admin_message_stats(period=None):
+    """Сколько исходящих сообщений отправил каждый админ. period: 'week'|'month'|None(всё время)."""
+    where = "direction='out' AND sent_by IS NOT NULL AND sent_by <> ''"
+    params = []
+    if period == "week":
+        where += " AND created_at >= NOW() - INTERVAL '7 days'"
+    elif period == "month":
+        where += " AND created_at >= NOW() - INTERVAL '30 days'"
+    return fetchall(
+        f"SELECT sent_by AS name, COUNT(*) AS n FROM messages WHERE {where} "
+        "GROUP BY sent_by ORDER BY n DESC", tuple(params),
+    )
 
 
 def get_message(message_id):
