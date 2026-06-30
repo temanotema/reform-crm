@@ -1820,7 +1820,7 @@ function showChatSkeleton(box){
 // до первой отрисовки, чтобы не было заметного «перекраса»/моргания кружков.
 colorizeAvatars();
 formatDialogTimes();   // сразу относительное время (Вчера/день), чтобы не моргало ЧЧ:ММ
-initMediaPlayers();    // голосовые → плеер с волной, кружки → круг с кольцом прогресса
+try{ initMediaPlayers(); }catch(e){}   // плееры — не должны влиять на остальной скрипт (опрос ниже)
 (function(){
   var cav=document.getElementById('chatAv'), cnm=document.getElementById('chatName');
   if(cav && cnm && cnm.textContent.trim()) cav.style.background=avColor(cnm.textContent.trim());
