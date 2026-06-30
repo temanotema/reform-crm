@@ -777,6 +777,25 @@ input[type=color]{padding:3px 6px;height:36px;width:52px;cursor:pointer}
 .msg-media.round{border-radius:50%;width:200px;height:200px;max-width:200px}
 .msg-media.round video{width:200px;height:200px;max-width:200px;max-height:200px;
   border-radius:50%;object-fit:cover}
+/* Голосовое — компактный плеер с волной (как в Telegram) */
+.voice{display:flex;align-items:center;gap:9px;max-width:260px;min-width:190px;padding:3px 0;line-height:1}
+.v-play{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:none;background:var(--accent);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.v-play svg{fill:#fff}
+.v-wave{flex:1;display:flex;align-items:center;gap:2px;height:28px;cursor:pointer}
+.v-wave i{flex:1 1 0;min-width:2px;background:var(--text-sec);opacity:.4;border-radius:2px;transition:opacity .12s,background .12s}
+.v-wave i.on{opacity:1;background:var(--accent)}
+.v-time{flex:0 0 auto;font-size:11px;color:var(--text-sec);min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
+/* Видеокружок — круг с кольцом прогресса и тап-плеем */
+.circle{position:relative;width:200px;height:200px;margin-bottom:6px}
+.circle .c-vid{width:200px;height:200px;border-radius:50%;object-fit:cover;display:block;background:#000;cursor:pointer}
+.circle .c-ring{position:absolute;inset:0;width:200px;height:200px;transform:rotate(-90deg);pointer-events:none}
+.circle .c-ring circle{fill:none;stroke-width:3}
+.circle .c-bg{stroke:rgba(255,255,255,.25)}
+.circle .c-fg{stroke:var(--accent);transition:stroke-dashoffset .15s linear}
+.circle .c-play{position:absolute;inset:0;margin:auto;width:54px;height:54px;border-radius:50%;border:none;
+  background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.circle.playing .c-play{display:none}
 /* Лайтбокс: фото во весь экран, клик вне фото — закрыть */
 .lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:10000;
   align-items:center;justify-content:center;padding:20px;cursor:zoom-out}
@@ -963,17 +982,84 @@ function renderMsgMedia(m){
     return '<div class="msg-media"><img src="'+url+'" alt="" style="cursor:zoom-in" onclick="openLightbox(this.src)"></div>';
   }
   if(m.media_type === 'video_note'){
-    return '<div class="msg-media round"><video src="'+url+'" controls preload="metadata"></video></div>';
+    return '<div class="circle" data-src="'+url+'"></div>';
   }
   if(m.media_type === 'video'){
     return '<div class="msg-media"><video src="'+url+'" controls preload="metadata"></video></div>';
   }
   if(m.media_type === 'audio'){
-    return '<div class="msg-media"><audio src="'+url+'" controls preload="metadata" style="max-width:240px"></audio></div>';
+    return '<div class="voice" data-src="'+url+'"></div>';
   }
   var name = m.media_filename || 'Файл';
   return '<a class="msg-file" href="'+url+'" target="_blank">' +
     '<span class="file-icon"><i class="ti ti-paperclip"></i></span><span class="file-name">'+esc(name)+'</span></a>';
+}
+// Превращает плейсхолдеры .voice/.circle в плеер с волной и круг с кольцом прогресса.
+// Вызывается после первичной отрисовки и после добавления новых сообщений.
+function _fmtT(s){ s=Math.max(0,Math.floor(s||0)); return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2); }
+function initMediaPlayers(root){
+  root = root || document;
+  // ── Голосовые ──
+  var voices = root.querySelectorAll('.voice:not(.ready)');
+  Array.prototype.forEach.call(voices, function(box){
+    box.classList.add('ready');
+    var src = box.getAttribute('data-src'), bars = '';
+    for(var i=0;i<32;i++){ bars += '<i style="height:'+(26+Math.round(Math.abs(Math.sin(i*1.7))*62))+'%"></i>'; }
+    box.innerHTML =
+      '<button class="v-play" type="button"><svg viewBox="0 0 24 24" width="17" height="17"><path class="v-ic" d="M8 5v14l11-7z"/></svg></button>'+
+      '<div class="v-wave">'+bars+'</div><span class="v-time">0:00</span>'+
+      '<audio preload="metadata" src="'+src+'"></audio>';
+    var audio=box.querySelector('audio'), btn=box.querySelector('.v-play'), ic=box.querySelector('.v-ic'),
+        wave=box.querySelector('.v-wave'), tEl=box.querySelector('.v-time'), nb=wave.children.length;
+    audio.addEventListener('loadedmetadata', function(){ if(isFinite(audio.duration)) tEl.textContent=_fmtT(audio.duration); });
+    btn.addEventListener('click', function(){
+      if(audio.paused){
+        document.querySelectorAll('.voice audio').forEach(function(a){ if(a!==audio) a.pause(); });
+        audio.play();
+      } else { audio.pause(); }
+    });
+    audio.addEventListener('play', function(){ ic.setAttribute('d','M7 5h3.5v14H7zM13.5 5H17v14h-3.5z'); });
+    audio.addEventListener('pause', function(){ ic.setAttribute('d','M8 5v14l11-7z'); });
+    audio.addEventListener('timeupdate', function(){
+      var p=audio.duration?audio.currentTime/audio.duration:0, on=Math.round(p*nb);
+      for(var i=0;i<nb;i++){ wave.children[i].classList.toggle('on', i<on); }
+      tEl.textContent=_fmtT(audio.currentTime||audio.duration);
+    });
+    audio.addEventListener('ended', function(){
+      for(var i=0;i<nb;i++){ wave.children[i].classList.remove('on'); }
+      tEl.textContent=_fmtT(audio.duration);
+    });
+    wave.addEventListener('click', function(e){
+      var rc=wave.getBoundingClientRect();
+      if(audio.duration) audio.currentTime=((e.clientX-rc.left)/rc.width)*audio.duration;
+    });
+  });
+  // ── Кружки (video_note) ──
+  var circles = root.querySelectorAll('.circle:not(.ready)');
+  Array.prototype.forEach.call(circles, function(box){
+    box.classList.add('ready');
+    var src=box.getAttribute('data-src');
+    box.innerHTML =
+      '<video class="c-vid" src="'+src+'" preload="metadata" playsinline webkit-playsinline muted></video>'+
+      '<svg class="c-ring" viewBox="0 0 100 100"><circle class="c-bg" cx="50" cy="50" r="48"/><circle class="c-fg" cx="50" cy="50" r="48"/></svg>'+
+      '<button class="c-play" type="button"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M8 5v14l11-7z" fill="#fff"/></svg></button>';
+    var vid=box.querySelector('.c-vid'), ring=box.querySelector('.c-fg'), btn=box.querySelector('.c-play'),
+        C=2*Math.PI*48;
+    ring.style.strokeDasharray=C; ring.style.strokeDashoffset=C;
+    vid.addEventListener('loadedmetadata', function(){ try{ vid.currentTime=0.05; }catch(e){} });
+    function play(){
+      document.querySelectorAll('.circle video').forEach(function(v){ if(v!==vid) v.pause(); });
+      vid.muted=false; vid.play();
+    }
+    btn.addEventListener('click', play);
+    vid.addEventListener('click', function(){ if(vid.paused) play(); else vid.pause(); });
+    vid.addEventListener('play', function(){ box.classList.add('playing'); });
+    vid.addEventListener('pause', function(){ box.classList.remove('playing'); });
+    vid.addEventListener('timeupdate', function(){
+      ring.style.strokeDashoffset = C*(1-(vid.duration?vid.currentTime/vid.duration:0));
+    });
+    vid.addEventListener('ended', function(){ box.classList.remove('playing'); ring.style.strokeDashoffset=C; try{vid.currentTime=0.05;}catch(e){} });
+  });
 }
 // Авто-подпись медиа («📷 Фото» и т.п.) нужна только для превью в списке диалогов,
 // в самом пузыре её показывать не нужно — фото/файл и так видны.
@@ -1407,11 +1493,11 @@ CHATS_TPL = """
             {% if m.media_type == 'photo' %}
             <div class="msg-media"><img src="/api/media/{{m.id}}" alt="" loading="lazy" style="cursor:zoom-in" onclick="openLightbox(this.src)"></div>
             {% elif m.media_type == 'video_note' %}
-            <div class="msg-media round"><video src="/api/media/{{m.id}}" controls preload="metadata"></video></div>
+            <div class="circle" data-src="/api/media/{{m.id}}"></div>
             {% elif m.media_type == 'video' %}
             <div class="msg-media"><video src="/api/media/{{m.id}}" controls preload="metadata"></video></div>
             {% elif m.media_type == 'audio' %}
-            <div class="msg-media"><audio src="/api/media/{{m.id}}" controls preload="metadata"></audio></div>
+            <div class="voice" data-src="/api/media/{{m.id}}"></div>
             {% elif m.media_type == 'document' %}
             <a class="msg-file" href="/api/media/{{m.id}}" target="_blank">
               <span class="file-icon"><i class="ti ti-paperclip"></i></span>
@@ -1522,7 +1608,9 @@ function appendMsg(m, animate){
   if(!box || lastKnownMsgIds.has(m.id)) return false;
   var tmp = document.createElement('div');
   tmp.innerHTML = renderMsg(m, animate);
-  box.appendChild(tmp.firstChild);
+  var node = tmp.firstChild;
+  box.appendChild(node);
+  initMediaPlayers(node);
   lastKnownMsgIds.add(m.id);
   return true;
 }
@@ -1610,6 +1698,7 @@ async function loadChat(id){
     box.innerHTML = data.messages.map(function(m){ return renderMsg(m, false); }).join('');
     lastKnownMsgIds.clear();
     initMsgState();
+    initMediaPlayers(box);
     insertDateSeparators(box);
     scrollMsgsBottom(box);
     updateScrollFab();
@@ -1728,6 +1817,7 @@ function showChatSkeleton(box){
 // до первой отрисовки, чтобы не было заметного «перекраса»/моргания кружков.
 colorizeAvatars();
 formatDialogTimes();   // сразу относительное время (Вчера/день), чтобы не моргало ЧЧ:ММ
+initMediaPlayers();    // голосовые → плеер с волной, кружки → круг с кольцом прогресса
 (function(){
   var cav=document.getElementById('chatAv'), cnm=document.getElementById('chatName');
   if(cav && cnm && cnm.textContent.trim()) cav.style.background=avColor(cnm.textContent.trim());
@@ -3155,6 +3245,26 @@ def api_messages(client_id):
     return jsonify([_message_to_json(m) for m in msgs])
 
 
+def _media_to_mp3(src_path):
+    """Конвертирует голосовое (.oga/opus) в mp3 через ffmpeg — иначе iPhone/Safari не играют.
+    Возвращает имя нового файла или None (ffmpeg нет/ошибка → оставляем оригинал)."""
+    import subprocess
+    dst = os.path.splitext(src_path)[0] + ".mp3"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src_path, "-vn", "-codec:a", "libmp3lame", "-q:a", "5", dst],
+            check=True, capture_output=True, timeout=90,
+        )
+        try:
+            os.remove(src_path)
+        except OSError:
+            pass
+        return os.path.basename(dst)
+    except Exception as e:
+        app.logger.warning("ffmpeg→mp3 не удалось (%s): %s", os.path.basename(src_path), e)
+        return None
+
+
 @app.route("/api/media/<int:message_id>")
 @require_auth
 def api_media(message_id):
@@ -3185,23 +3295,31 @@ def api_media(message_id):
             resp = _requests.get(url, timeout=30, proxies=_TG_PROXIES)
             if resp.status_code == 200:
                 fname = msg.get("media_filename") or "file"
-                # сохраняем на диск под уникальным именем (кэш)
                 ext = (os.path.splitext(url.split("?")[0])[1]
                        or os.path.splitext(fname)[1] or "")
                 local_name = f"msg{message_id}{ext}"
+                disk_path = os.path.join(UPLOAD_FOLDER, local_name)
                 try:
-                    with open(os.path.join(UPLOAD_FOLDER, local_name), "wb") as _f:
+                    with open(disk_path, "wb") as _f:
                         _f.write(resp.content)
+                    # Голосовые Telegram (.oga/opus) → mp3, иначе iPhone/Safari не играют.
+                    if msg.get("media_type") == "audio" and ext.lower() in (".oga", ".ogg", ".opus", ""):
+                        mp3 = _media_to_mp3(disk_path)
+                        if mp3:
+                            local_name = mp3
+                            disk_path = os.path.join(UPLOAD_FOLDER, local_name)
                     db.set_message_local_path(message_id, local_name)
+                    r = send_file(disk_path, as_attachment=False,
+                                  download_name=msg.get("media_filename") or "file")
+                    r.headers["Cache-Control"] = _MEDIA_CACHE
+                    return r
                 except Exception as e:
-                    app.logger.warning("media cache save (msg %s): %s", message_id, e)
-                # MIME по расширению имени (чтобы картинки/PDF открывались, а не качались
-                # как octet-stream); если не угадали — берём тип из ответа Telegram.
+                    app.logger.warning("media cache (msg %s): %s", message_id, e)
+                # запасной путь: отдать прямо из памяти (если не удалось сохранить/сконвертировать)
                 mimetype = (mimetypes.guess_type(fname)[0]
                             or resp.headers.get("Content-Type")
                             or "application/octet-stream")
                 r = Response(resp.content, mimetype=mimetype)
-                # inline + корректное имя (с кириллицей через RFC 5987):
                 r.headers["Content-Disposition"] = "inline; filename*=UTF-8''" + quote(fname)
                 r.headers["Cache-Control"] = _MEDIA_CACHE
                 return r
