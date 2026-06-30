@@ -1118,7 +1118,7 @@ function renderMsg(m, animate){
   var sig = (m.direction === 'out' && m.sent_by) ? '<span class="msig">'+esc(m.sent_by)+'</span> · ' : '';
   return '<div class="msg-wrap '+cls+anim+'" data-msg-id="'+m.id+'"><div class="msg '+cls+'">' +
     renderMsgMedia(m) + (showText ? '<span class="mtext">'+esc(m.text)+'</span>' : '') +
-    '<span class="mtime">'+sig+m.created_at+'</span></div></div>';
+    '<span class="mtime" data-date="'+esc((m.created_at||'').slice(0,5))+'">'+sig+m.created_at+'</span></div></div>';
 }
 
 // ── Реалтайм: бейдж непрочитанных + звук + уведомления (SSE с откатом на опрос) ──
@@ -1203,9 +1203,7 @@ function crmHandle(p){
   if(crmLastIncoming!==null && p.incoming_id>crmLastIncoming){
     crmDing();
     crmNotify(p);
-    // Внутрипанельный «пузырь» (push-stack) отключён по просьбе: остаётся звук + системное
-    // уведомление (+ Web Push на телефон). Чтобы вернуть — раскомментировать строку ниже.
-    // if(!(window.activeId && window.activeId === p.client_id)){ crmPush(p); }
+    if(!(window.activeId && window.activeId === p.client_id)){ crmPush(p); }
   }
   crmLastIncoming = p.incoming_id;
   document.dispatchEvent(new CustomEvent('crm:update', {detail:p}));
@@ -1774,7 +1772,7 @@ CHATS_TPL = """
             {% endif %}
             {% set _auto = m.media_type and (m.text == '📷 Фото' or m.text == '🎬 Видео' or (m.media_type == 'audio' and m.text == '🎤 Голосовое') or (m.media_type == 'video_note' and m.text == '⭕ Видеокружок') or (m.media_type == 'document' and m.text == '📎 ' ~ (m.media_filename or ''))) %}
             {% if m.text and not _auto %}<span class="mtext">{{ m.text|e }}</span>{% endif %}
-            <span class="mtime">{% if m.direction == 'out' and m.sent_by %}<span class="msig">{{ m.sent_by|e }}</span> · {% endif %}{{m.created_at.strftime('%d.%m %H:%M')}}</span>
+            <span class="mtime" data-date="{{m.created_at.strftime('%d.%m')}}">{% if m.direction == 'out' and m.sent_by %}<span class="msig">{{ m.sent_by|e }}</span> · {% endif %}{{m.created_at.strftime('%d.%m %H:%M')}}</span>
           </div>
         </div>
         {% endfor %}
@@ -2063,7 +2061,7 @@ function insertDateSeparators(box){
   var last=null;
   Array.prototype.slice.call(box.querySelectorAll('.msg-wrap')).forEach(function(w){
     var t=w.querySelector('.mtime'); if(!t) return;
-    var d=(t.textContent||'').trim().slice(0,5);
+    var d=(t.getAttribute('data-date') || (t.textContent||'').trim().slice(0,5));
     if(d && d!==last){
       var sep=document.createElement('div');
       sep.className='date-sep'; sep.innerHTML='<span>'+dateLabel(d)+'</span>';
