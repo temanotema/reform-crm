@@ -19,6 +19,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 import database as db
+import config
 from config import BOT_TOKEN, ADMIN_IDS, CLINIC_NAME, TELEGRAM_PROXY
 
 # ── Визуальный слой ──────────────────────────────────────────────────────────
@@ -1062,6 +1063,8 @@ def _client_first_name(client, fallback="Уважаемый гость") -> str:
 async def _send_due_reminders():
     """Раз в час: берём записи на завтра из YCLIENTS и шлём напоминания
     с кнопками «Подтвердить/Отменить». Каждая запись — один раз (дедуп по id)."""
+    if config.in_quiet_hours():
+        return   # тихие часы — отправим на следующем часовом проходе (в рабочее время)
     tomorrow = (clinic_now() + timedelta(days=1)).date()
     records = await yclients.get_appointments_for_date(tomorrow)
     if not records:
@@ -1105,9 +1108,9 @@ async def _send_birthday_greetings():
     """Поздравления с ДР (если включено в вебе). Раз в год на клиента, не ночью."""
     if not db.get_setting("birthday_enabled"):
         return
+    if config.in_quiet_hours():
+        return   # тихие часы — поздравим, когда наступит рабочее время
     now = clinic_now()
-    if now.hour < 9:   # не шлём раньше 9 утра по МСК
-        return
     year = now.year
     sent = 0
     for c in db.get_birthday_clients_today():
@@ -1141,6 +1144,11 @@ async def _send_booking_notifications():
     if records is None:        # ошибка/интеграция выключена — пробуем позже
         return
     seeded = db.get_setting("booking_notify_seeded")
+    # Тихие часы: уже инициализированные — пропускаем (запись уведомим в рабочее время,
+    # этот же опрос раз в 2 мин подхватит её после 10:00). Первичную инициализацию
+    # (seeded=False) пропускать нельзя — она ничего не шлёт, только помечает старые записи.
+    if seeded and config.in_quiet_hours():
+        return
     now = datetime.now()
     sent = 0
     for rec in records:

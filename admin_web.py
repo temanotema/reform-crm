@@ -440,6 +440,11 @@ def yclients_webhook():
             db.mark_yc_booking_notified(rid)
             continue
 
+        # Тихие часы: сейчас НЕ шлём и НЕ помечаем — страховочный опрос бота отправит
+        # подтверждение, когда наступит рабочее время (после 10:00).
+        if config.in_quiet_hours():
+            continue
+
         client = db.get_client_by_phone(phone) if phone else None
         if client and client.get("tg_id") and client["tg_id"] > 0:
             first = client.get("reg_first_name") or client.get("first_name") or "Уважаемый гость"

@@ -97,6 +97,13 @@ VAPID_PUBLIC_KEY  = os.getenv(
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")   # СЕКРЕТ — задать в config_local.py
 VAPID_CLAIM_EMAIL = os.getenv("VAPID_CLAIM_EMAIL", "mailto:re.form.cosmetology1@gmail.com")
 
+# ── Тихие часы ────────────────────────────────────────────────────────────────
+# Автоматические уведомления клиентам (новая запись, напоминание, день рождения)
+# НЕ отправляются в этом диапазоне; они уйдут, как только наступит рабочее время.
+# Время — локальное на сервере (на проде это Europe/Moscow). Можно менять в config_local.py.
+QUIET_HOURS_START = int(os.getenv("QUIET_HOURS_START", "22"))   # с 22:00
+QUIET_HOURS_END   = int(os.getenv("QUIET_HOURS_END",   "10"))   # до 10:00
+
 
 # ── Локальные секреты (НЕ в git) ──────────────────────────────────────────────
 # config_local.py переопределяет значения выше реальными данными.
@@ -108,3 +115,14 @@ except ImportError:
 # DATABASE_URL собираем ПОСЛЕ config_local — чтобы пароль из него попал в строку.
 DATABASE_URL = os.getenv("DATABASE_URL") or \
     f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+
+def in_quiet_hours(hour=None):
+    """True, если сейчас «тихие часы» — автоуведомления клиентам слать нельзя.
+    Диапазон может идти через полночь (напр. 22→10). Время локальное (на проде МСК)."""
+    from datetime import datetime
+    h = datetime.now().hour if hour is None else hour
+    s, e = QUIET_HOURS_START, QUIET_HOURS_END
+    if s == e:
+        return False
+    return (s <= h < e) if s < e else (h >= s or h < e)
