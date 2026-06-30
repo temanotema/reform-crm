@@ -313,8 +313,12 @@ def init_db():
         is_super      BOOLEAN DEFAULT FALSE,
         is_active     BOOLEAN DEFAULT TRUE,
         token         TEXT DEFAULT '',
+        theme         TEXT DEFAULT 'light',
+        wallpaper     TEXT DEFAULT 'default',
         created_at    TIMESTAMPTZ DEFAULT NOW()
     )""")
+    _safe_alter("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'light'")
+    _safe_alter("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS wallpaper TEXT DEFAULT 'default'")
     # Супер-админ = текущий логин/пароль из config (создаётся один раз, пароль не перезаписывается).
     try:
         import config as _cfg
@@ -628,16 +632,24 @@ def _new_admin_token():
 
 
 def seed_super_admin(login, password, name="Супер-админ"):
-    """Создаёт супер-админа при первом запуске, если его ещё нет. Пароль НЕ перезаписывает."""
+    """Супер-админ = логин/пароль из config (источник истины). Создаёт при первом запуске,
+    при последующих — обновляет пароль/имя из config (поменял пароль в config_local +
+    рестарт → он применится). Токен НЕ трогаем, чтобы рестарт сам по себе не разлогинивал;
+    для выхода есть кнопка «Разлогинить всех» в /adm."""
     if not login or not password:
         return
-    if get_admin_by_login(login):
-        return
-    execute(
-        """INSERT INTO admin_users (login, password_hash, name, is_super, is_active, token)
-           VALUES (%s,%s,%s,TRUE,TRUE,%s) ON CONFLICT (login) DO NOTHING""",
-        (login, _hash_pw(password), name, _new_admin_token()),
-    )
+    existing = get_admin_by_login(login)
+    if existing:
+        execute(
+            "UPDATE admin_users SET password_hash=%s, name=%s, is_super=TRUE, is_active=TRUE WHERE id=%s",
+            (_hash_pw(password), name, existing["id"]),
+        )
+    else:
+        execute(
+            """INSERT INTO admin_users (login, password_hash, name, is_super, is_active, token)
+               VALUES (%s,%s,%s,TRUE,TRUE,%s)""",
+            (login, _hash_pw(password), name, _new_admin_token()),
+        )
 
 
 def get_admin_by_login(login):
@@ -705,6 +717,27 @@ def set_admin_active(admin_id, active):
 def force_logout_admin(admin_id):
     """Ротирует токен — текущие сессии админа становятся недействительными (вход остаётся)."""
     execute("UPDATE admin_users SET token=%s WHERE id=%s", (_new_admin_token(), admin_id))
+
+
+def logout_all_admins():
+    """Ротирует токены ВСЕХ админов (включая супер) — все обязаны войти заново.
+    У каждого — свой уникальный токен."""
+    execute("UPDATE admin_users SET token = md5(random()::text || clock_timestamp()::text || id::text)")
+
+
+def get_admin_prefs(admin_id):
+    """Личные настройки админа (тема, обои) — хранятся в аккаунте, а не в браузере."""
+    a = get_admin(admin_id)
+    if not a:
+        return {"theme": "light", "wallpaper": "default"}
+    return {"theme": a.get("theme") or "light", "wallpaper": a.get("wallpaper") or "default"}
+
+
+def set_admin_pref(admin_id, key, value):
+    """Сохраняет одну личную настройку. key из белого списка (защита имени колонки)."""
+    if key not in ("theme", "wallpaper"):
+        return
+    execute(f"UPDATE admin_users SET {key}=%s WHERE id=%s", ((value or "")[:32], admin_id))
 
 
 def admin_message_stats(period=None):

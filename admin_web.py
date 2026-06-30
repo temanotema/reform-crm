@@ -496,7 +496,7 @@ BASE = r"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<script>(function(){document.documentElement.setAttribute('data-theme',localStorage.getItem('crm-theme')||'light');})();</script>
+<script>(function(){document.documentElement.setAttribute('data-theme','{{ session.get("theme") or "light" }}');window.CRM_WP='{{ session.get("wallpaper") or "default" }}';})();</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/assets/icons/icon-192.png">
@@ -973,19 +973,26 @@ tr:hover td{background:var(--hover)}
 <div id="toast" class="toast"></div>
 <div class="push-stack" id="pushStack"></div>
 <script>
-function applyTheme(theme){
+function savePref(key, value){
+  // Личные настройки (тема, обои) сохраняются в аккаунте на сервере.
+  try{
+    var b = {}; b[key] = value;
+    fetch('/api/me/prefs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)});
+  }catch(e){}
+}
+function applyTheme(theme, save){
   document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('crm-theme', theme);
   var icon = document.getElementById('themeIcon');
   var label = document.getElementById('themeLabel');
   if(icon) icon.className = theme === 'dark' ? 'ti ti-sun' : 'ti ti-moon';
   if(label) label.textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
+  if(save) savePref('theme', theme);
 }
 function toggleTheme(){
   var cur = document.documentElement.getAttribute('data-theme') || 'light';
-  applyTheme(cur === 'dark' ? 'light' : 'dark');
+  applyTheme(cur === 'dark' ? 'light' : 'dark', true);
 }
-applyTheme(localStorage.getItem('crm-theme') || 'light');
+applyTheme(document.documentElement.getAttribute('data-theme') || 'light', false);
 function showToast(msg, type){
   var t = document.getElementById('toast');
   t.textContent = msg;
@@ -1196,7 +1203,9 @@ function crmHandle(p){
   if(crmLastIncoming!==null && p.incoming_id>crmLastIncoming){
     crmDing();
     crmNotify(p);
-    if(!(window.activeId && window.activeId === p.client_id)){ crmPush(p); }
+    // Внутрипанельный «пузырь» (push-stack) отключён по просьбе: остаётся звук + системное
+    // уведомление (+ Web Push на телефон). Чтобы вернуть — раскомментировать строку ниже.
+    // if(!(window.activeId && window.activeId === p.client_id)){ crmPush(p); }
   }
   crmLastIncoming = p.incoming_id;
   document.dispatchEvent(new CustomEvent('crm:update', {detail:p}));
@@ -1331,6 +1340,8 @@ def login():
                 session["admin_token"] = user.get("token")
                 session["admin_name"] = user.get("name") or user["login"]
                 session["is_super"] = bool(user.get("is_super"))
+                session["theme"] = user.get("theme") or "light"
+                session["wallpaper"] = user.get("wallpaper") or "default"
                 _login_fails.pop(ip, None)
                 return redirect("/chats")
             cnt += 1
@@ -1414,6 +1425,11 @@ ADM_TPL = """
       </tr>
       {% endfor %}
     </table>
+    <form method="post" action="/adm/logout-all" style="margin-top:12px"
+          onsubmit="return confirm('Разлогинить ВСЕХ, включая вас? Все должны будут войти заново.')">
+      <button class="adm-btn adm-danger">Разлогинить всех</button>
+    </form>
+    <p style="color:var(--text-sec);font-size:12px;margin:8px 0 0">Свой пароль супер-админа меняешь в config_local.py на сервере, затем «Разлогинить всех» — старые входы перестанут работать.</p>
   </div>
 
   <div class="adm-sec">
@@ -1540,6 +1556,30 @@ def adm_delete(admin_id):
     if _adm_action_target(admin_id):
         db.delete_admin(admin_id)
     return redirect("/adm")
+
+
+@app.route("/adm/logout-all", methods=["POST"])
+@require_super
+def adm_logout_all():
+    if _adm_pin_required():
+        return redirect("/adm")
+    db.logout_all_admins()   # включая супер-админа — после этого войти заново всем
+    session.clear()
+    return redirect("/login")
+
+
+@app.route("/api/me/prefs", methods=["POST"])
+@require_auth
+def api_me_prefs():
+    aid = session.get("admin_id")
+    data = request.json or {}
+    if "theme" in data:
+        db.set_admin_pref(aid, "theme", data["theme"])
+        session["theme"] = data["theme"]
+    if "wallpaper" in data:
+        db.set_admin_pref(aid, "wallpaper", data["wallpaper"])
+        session["wallpaper"] = data["wallpaper"]
+    return jsonify({"ok": True})
 
 
 @app.route("/")
@@ -2187,12 +2227,12 @@ function closeHdrMenu(){
   document.querySelectorAll('.hdr-menu.open').forEach(function(m){ m.classList.remove('open'); });
 }
 function setWallpaper(wp){
-  try{ localStorage.setItem('crm-chat-wp', wp); }catch(e){}
+  window.CRM_WP = wp;
+  savePref('wallpaper', wp);   // личная настройка аккаунта
   applyWallpaper();   // меняем фон сразу, окно не закрываем — только по крестику
 }
 function applyWallpaper(){
-  var wp = 'default';
-  try{ wp = localStorage.getItem('crm-chat-wp') || 'default'; }catch(e){}
+  var wp = window.CRM_WP || 'default';
   var box = document.getElementById('msgs');
   if(box){
     box.classList.remove('wp-light','wp-dark','wp-photo');
