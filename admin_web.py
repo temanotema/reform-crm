@@ -594,7 +594,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);
   background:var(--card);border:1px solid var(--border);border-radius:10px;
   padding:7px 10px;cursor:pointer;line-height:1;color:var(--accent);font-size:18px;
   box-shadow:var(--shadow);align-items:center;justify-content:center}
-.notify-fab{display:none;position:fixed;top:calc(58px + env(safe-area-inset-top));right:12px;z-index:400;
+.notify-fab{display:none;position:fixed;top:calc(12px + env(safe-area-inset-top));right:56px;z-index:400;
   background:var(--card);border:1px solid var(--border);border-radius:10px;
   padding:7px 10px;cursor:pointer;line-height:1;color:var(--accent);font-size:18px;
   box-shadow:var(--shadow);align-items:center;justify-content:center}
@@ -1732,7 +1732,7 @@ CHATS_TPL = """
       <span><i class="ti ti-message-circle"></i> Диалоги</span>
       <span id="dlgHdrRight" style="display:flex;align-items:center;gap:8px">
         {% if total_unread > 0 %}<span class="unread">{{total_unread}}</span>{% endif %}
-        <button class="dlg-filter" id="unreadBtn" onclick="toggleUnreadOnly(this)" title="Только непрочитанные"><i class="ti ti-bell"></i></button>
+        <button class="dlg-filter" id="unreadBtn" onclick="toggleUnreadOnly(this)" title="Только непрочитанные"><i class="ti ti-notebook"></i></button>
       </span>
     </div>
     <div class="client-search">
