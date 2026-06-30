@@ -594,6 +594,11 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);
   background:var(--card);border:1px solid var(--border);border-radius:10px;
   padding:7px 10px;cursor:pointer;line-height:1;color:var(--accent);font-size:18px;
   box-shadow:var(--shadow);align-items:center;justify-content:center}
+.notify-fab{display:none;position:fixed;top:calc(58px + env(safe-area-inset-top));right:12px;z-index:400;
+  background:var(--card);border:1px solid var(--border);border-radius:10px;
+  padding:7px 10px;cursor:pointer;line-height:1;color:var(--accent);font-size:18px;
+  box-shadow:var(--shadow);align-items:center;justify-content:center}
+.notify-fab.off{color:var(--text-sec)}
 .sidebar-overlay{display:none;position:fixed;inset:0;background:var(--overlay);z-index:199;
   opacity:0;transition:opacity .3s}
 .sidebar-overlay.open{display:block;opacity:1}
@@ -906,7 +911,7 @@ tr:hover td{background:var(--hover)}
   .main{margin-left:0;padding-top:calc(52px + env(safe-area-inset-top));padding-bottom:60px;height:100dvh}
   /* в открытом диалоге: прячем нижнюю навигацию, гамбургер и тему — наверху кнопка «Назад» */
   body.chat-open .mob-bar{display:none}
-  body.chat-open .hamburger,body.chat-open .theme-fab{display:none}
+  body.chat-open .hamburger,body.chat-open .theme-fab,body.chat-open .notify-fab{display:none}
   body.chat-open .main{padding-top:0;padding-bottom:0}
   body.chat-open .chat-hdr{padding-top:calc(10px + env(safe-area-inset-top))}
   body.chat-open .chat-compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
@@ -929,6 +934,7 @@ tr:hover td{background:var(--hover)}
   #rtxt,#srch{font-size:16px!important}
   .btn{padding:10px 16px}
   .theme-fab{display:flex}
+  .notify-fab{display:flex}
   .scroll-page{padding:16px;-webkit-overflow-scrolling:touch}
 }
 @media(min-width:768px){
@@ -941,6 +947,7 @@ tr:hover td{background:var(--hover)}
 <div class="sidebar-overlay" id="sideOverlay" onclick="closeSidebar()"></div>
 <button class="hamburger" onclick="toggleSidebar()" aria-label="Меню"><i class="ti ti-menu-2"></i></button>
 <button class="theme-fab" onclick="toggleTheme()" aria-label="Сменить тему"><i class="ti ti-brightness-2"></i></button>
+<button class="notify-fab" id="notifyFab" onclick="toggleNotify()" aria-label="Уведомления"><i id="notifyIconFab" class="ti ti-bell"></i></button>
 <div class="sidebar" id="sidebar">
   <div class="logo"><i class="ti ti-sparkles"></i> {{ clinic }}</div>
   <nav class="nav">
@@ -1002,6 +1009,10 @@ function applyNotifyUI(){
   var label = document.getElementById('notifyLabel');
   if(icon) icon.className = on ? 'ti ti-bell' : 'ti ti-bell-off';
   if(label) label.textContent = on ? 'Уведомления: вкл' : 'Уведомления: выкл';
+  var fabIcon = document.getElementById('notifyIconFab');
+  if(fabIcon) fabIcon.className = on ? 'ti ti-bell' : 'ti ti-bell-off';
+  var fab = document.getElementById('notifyFab');
+  if(fab) fab.classList.toggle('off', !on);
 }
 function toggleNotify(){
   window.CRM_NOTIFY = (window.CRM_NOTIFY === false);  // переключаем вкл/выкл
