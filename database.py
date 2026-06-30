@@ -603,6 +603,11 @@ def get_message(message_id):
     return fetchone("SELECT * FROM messages WHERE id=%s", (message_id,))
 
 
+def set_message_local_path(message_id, filename):
+    """Запоминает локальный файл медиа — чтобы потом отдавать с диска, а не качать из Telegram."""
+    execute("UPDATE messages SET media_local_path=%s WHERE id=%s", (filename, message_id))
+
+
 def get_messages(client_id):
     return fetchall(
         "SELECT * FROM messages WHERE client_id=%s ORDER BY created_at ASC",

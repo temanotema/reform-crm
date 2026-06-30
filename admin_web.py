@@ -3162,13 +3162,21 @@ def api_media(message_id):
     if not msg:
         return jsonify({"ok": False}), 404
 
+    # Медиа конкретного сообщения не меняется — можно смело кэшировать в браузере.
+    _MEDIA_CACHE = "private, max-age=2592000, immutable"
+
+    # 1) Уже скачано на диск — отдаём из файла (быстро, без прокси и Telegram).
     if msg.get("media_local_path"):
         path = os.path.join(UPLOAD_FOLDER, msg["media_local_path"])
         if os.path.isfile(path):
             # inline: браузер сам покажет картинку/PDF во вкладке, остальное — скачает.
-            return send_file(path, as_attachment=False,
-                            download_name=msg.get("media_filename") or "file")
+            r = send_file(path, as_attachment=False,
+                          download_name=msg.get("media_filename") or "file")
+            r.headers["Cache-Control"] = _MEDIA_CACHE
+            return r
 
+    # 2) Есть только file_id — качаем из Telegram ОДИН раз, кладём на диск, запоминаем
+    #    путь в БД; следующие запросы пойдут веткой выше (с диска, мгновенно).
     if msg.get("media_file_id"):
         try:
             import mimetypes
@@ -3177,6 +3185,16 @@ def api_media(message_id):
             resp = _requests.get(url, timeout=30, proxies=_TG_PROXIES)
             if resp.status_code == 200:
                 fname = msg.get("media_filename") or "file"
+                # сохраняем на диск под уникальным именем (кэш)
+                ext = (os.path.splitext(url.split("?")[0])[1]
+                       or os.path.splitext(fname)[1] or "")
+                local_name = f"msg{message_id}{ext}"
+                try:
+                    with open(os.path.join(UPLOAD_FOLDER, local_name), "wb") as _f:
+                        _f.write(resp.content)
+                    db.set_message_local_path(message_id, local_name)
+                except Exception as e:
+                    app.logger.warning("media cache save (msg %s): %s", message_id, e)
                 # MIME по расширению имени (чтобы картинки/PDF открывались, а не качались
                 # как octet-stream); если не угадали — берём тип из ответа Telegram.
                 mimetype = (mimetypes.guess_type(fname)[0]
@@ -3185,6 +3203,7 @@ def api_media(message_id):
                 r = Response(resp.content, mimetype=mimetype)
                 # inline + корректное имя (с кириллицей через RFC 5987):
                 r.headers["Content-Disposition"] = "inline; filename*=UTF-8''" + quote(fname)
+                r.headers["Cache-Control"] = _MEDIA_CACHE
                 return r
         except Exception:
             pass
