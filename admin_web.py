@@ -902,6 +902,11 @@ tr:hover td{background:var(--hover)}
 .empty{padding:48px 24px;text-align:center;color:var(--text-sec);font-size:14px}
 .scroll-page{flex:1;overflow-y:auto;padding:24px}
 .login-card{background:var(--card)!important;box-shadow:var(--shadow-lg)!important}
+/* Строки в модалке деталей клиента */
+.cd-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:14px}
+.cd-row:last-child{border-bottom:none}
+.cd-l{color:var(--text-sec);flex-shrink:0}
+.cd-v{font-weight:600;text-align:right;word-break:break-word}
 
 /* ── Responsive ── */
 @media(max-width:767px){
@@ -948,7 +953,9 @@ tr:hover td{background:var(--hover)}
     padding:11px 13px;background:var(--card)}
   .cli-tbl td{border:none!important;padding:3px 0;white-space:normal}
   .cli-tbl td.col-hide-m{display:none}
-  .cli-tbl td .av{width:36px!important;height:36px!important;font-size:13px!important}
+  .cli-tbl td .av{display:none}                 /* без букв-аватара, как в YClients */
+  .cli-tbl tr{cursor:pointer}
+  .cli-tbl td[data-actions]{display:flex;gap:8px;margin-top:8px}
 }
 @media(min-width:768px){
   .back-btn{display:none!important}
@@ -2724,19 +2731,27 @@ CLIENTS_TPL = """
       </thead>
       <tbody id="clientTbody">
       {% for c in clients %}
-      <tr data-cats="{% for cat in c.categories %}{{cat.id}} {% endfor %}" data-q="{{ display_name(c)|lower }} {{ c.phone or '' }} {{ (c.username or '')|lower }}">
+      <tr class="cli-row" data-cats="{% for cat in c.categories %}{{cat.id}} {% endfor %}" data-q="{{ display_name(c)|lower }} {{ c.phone or '' }} {{ (c.username or '')|lower }}"
+          data-id="{{c.id}}" data-name="{{ display_name(c)|e }}" data-phone="{{ (c.phone or '—')|e }}"
+          data-user="{{ (c.username or '')|e }}"
+          data-bot="{{ ((c.reg_first_name or c.first_name or '') ~ ' ' ~ (c.reg_last_name or c.last_name or ''))|trim|e }}"
+          data-birth="{{ c.birth_date.strftime('%d.%m.%Y') if c.birth_date else '—' }}"
+          data-reg="{{ c.created_at.strftime('%d.%m.%Y') if c.created_at else '—' }}"
+          data-first="{{(c.reg_first_name or c.first_name)|e}}" data-last="{{(c.reg_last_name or c.last_name)|e}}"
+          data-patron="{{(c.reg_patronymic or c.patronymic)|e}}" data-notes="{{c.notes|e}}"
+          onclick="openClientDetails(this)">
         <td>
           <div style="display:flex;align-items:center;gap:10px">
             <div class="av" style="width:32px;height:32px;font-size:12px;flex-shrink:0">{{(c.first_name or c.last_name or '?')[0]|upper}}</div>
             <div>
-              <a id="cname{{c.id}}" class="cname-link" title="ФИО из YClients (по номеру)" style="font-weight:600;text-decoration:none;color:var(--text);cursor:default">{{ display_name(c) }}</a>
+              <a id="cname{{c.id}}" class="cname-link" title="ФИО из YClients (по номеру)" style="font-weight:600;text-decoration:none;color:var(--text);cursor:pointer">{{ display_name(c) }}</a>
               <div style="font-size:11px;color:var(--muted)" title="Введено клиентом в боте">
-                {% if c.username %}@{{c.username}} · {% endif %}{{ display_name(c) }}
+                {% if c.username %}@{{c.username}} · {% endif %}{{ c.phone or '' }}
               </div>
             </div>
           </div>
         </td>
-        <td style="white-space:nowrap">{{c.phone or '—'}}</td>
+        <td class="col-hide-m" style="white-space:nowrap">{{c.phone or '—'}}</td>
         <td class="bd-cell col-hide-m" data-client="{{c.id}}" style="color:var(--muted);font-size:12px;white-space:nowrap">{{ c.birth_date.strftime('%d.%m.%Y') if c.birth_date else '—' }}</td>
         <td class="spent-cell col-hide-m" data-client="{{c.id}}" data-phone="{{c.phone or ''}}" style="white-space:nowrap;font-size:13px">{% if c.phone %}<span style="color:var(--muted)">…</span>{% else %}—{% endif %}</td>
         <td>
@@ -2748,17 +2763,30 @@ CLIENTS_TPL = """
           </div>
         </td>
         <td class="col-hide-m" style="color:var(--muted);font-size:12px;white-space:nowrap">{{c.created_at.strftime('%d.%m.%Y') if c.created_at else '—'}}</td>
-        <td>
+        <td data-actions>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn-sm" onclick="editClient({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}','{{(c.reg_last_name or c.last_name)|e}}','{{(c.reg_patronymic or c.patronymic)|e}}','{{c.phone|e}}','{{c.notes|e}}')"><i class="ti ti-edit"></i></button>
-            <button class="btn-sm" onclick="editCategories({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}')"><i class="ti ti-tag"></i></button>
-            <a href="/chats/{{c.id}}" class="btn-sm"><i class="ti ti-message-circle"></i></a>
+            <button class="btn-sm" onclick="event.stopPropagation();editClient({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}','{{(c.reg_last_name or c.last_name)|e}}','{{(c.reg_patronymic or c.patronymic)|e}}','{{c.phone|e}}','{{c.notes|e}}')"><i class="ti ti-edit"></i></button>
+            <button class="btn-sm" onclick="event.stopPropagation();editCategories({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}')"><i class="ti ti-tag"></i></button>
+            <a href="/chats/{{c.id}}" class="btn-sm" onclick="event.stopPropagation()"><i class="ti ti-message-circle"></i></a>
           </div>
         </td>
       </tr>
       {% endfor %}
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- Модал деталей клиента (тап по карточке) -->
+<div id="cliDetailModal" class="modal">
+  <div class="modal-box">
+    <div class="modal-head"><h3 id="cdName">Клиент</h3><button class="modal-close" onclick="closeModal('cliDetailModal')">×</button></div>
+    <div id="cdBody"></div>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="cdEdit()"><i class="ti ti-edit"></i> Изменить</button>
+      <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="cdCats()"><i class="ti ti-tag"></i> Категории</button>
+      <a id="cdChat" class="btn btn-ghost" style="flex:1;justify-content:center" href="#"><i class="ti ti-message-circle"></i> Чат</a>
+    </div>
   </div>
 </div>
 
@@ -2954,6 +2982,46 @@ function filterByCat(catId, btn){
 function searchClients(v){
   _cliQ = (v || '').toLowerCase().trim();
   applyCliFilter();
+}
+
+// Тап по карточке клиента → модалка со всеми данными (в т.ч. скрытыми на мобилке).
+var _cdTr = null;
+function openClientDetails(tr){
+  _cdTr = tr;
+  var g = function(k){ return tr.getAttribute(k) || ''; };
+  document.getElementById('cdName').textContent = g('data-name') || 'Клиент';
+  var spentEl = tr.querySelector('.spent-cell');
+  var spent = spentEl ? spentEl.textContent.trim() : '';
+  if(spent === '…' || spent === '') spent = '—';
+  var vipEl = tr.querySelector('.vip-tag');
+  var vip = (vipEl && vipEl.style.display !== 'none') ? vipEl.textContent.trim() : '';
+  var cats = [];
+  tr.querySelectorAll('td .tag').forEach(function(t){ cats.push(t.textContent.trim()); });
+  var row = function(label, val){
+    return val ? '<div class="cd-row"><span class="cd-l">'+label+'</span><span class="cd-v">'+esc(val)+'</span></div>' : '';
+  };
+  document.getElementById('cdBody').innerHTML =
+    row('Телефон', g('data-phone')) +
+    (g('data-user') ? row('Telegram', '@'+g('data-user')) : '') +
+    row('Имя из бота', g('data-bot')) +
+    row('Дата рождения', g('data-birth')) +
+    row('Потрачено', spent) +
+    row('Зарегистрирован', g('data-reg')) +
+    (vip ? row('Статус', vip) : '') +
+    (cats.length ? row('Категории', cats.join(', ')) : '');
+  document.getElementById('cdChat').href = '/chats/' + g('data-id');
+  openModal('cliDetailModal');
+}
+function cdEdit(){
+  if(!_cdTr) return; var g = function(k){ return _cdTr.getAttribute(k) || ''; };
+  closeModal('cliDetailModal');
+  editClient(g('data-id'), g('data-first'), g('data-last'), g('data-patron'),
+             g('data-phone') === '—' ? '' : g('data-phone'), g('data-notes'));
+}
+function cdCats(){
+  if(!_cdTr) return; var g = function(k){ return _cdTr.getAttribute(k) || ''; };
+  closeModal('cliDetailModal');
+  editCategories(g('data-id'), g('data-first'));
 }
 
 async function editCategories(clientId, name){
