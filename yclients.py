@@ -357,6 +357,50 @@ async def get_appointments_for_date(target_date):
             return []
 
 
+async def confirm_record(record_id):
+    """Ставит записи статус «Подтвердил» (attendance) в YClients — по нажатию ДА в боте.
+
+    Read-modify-write: читаем запись, меняем ТОЛЬКО attendance и пишем обратно — услуги,
+    время, мастер, клиент не трогаем. Значение статуса — config.YCLIENTS_CONFIRMED_ATTENDANCE.
+    Best-effort: при любой ошибке возвращает False, поток ДА (сообщение клиенту, уведомление
+    админу) не ломается. Единственный write-вызов в YClients — записей бот НЕ создаёт."""
+    if not is_configured() or not record_id:
+        return False
+    async with aiohttp.ClientSession() as session:
+        try:
+            if not await authenticate(session):
+                return False
+            got = await _request(session, "GET", f"/record/{COMPANY_ID}/{record_id}")
+            rec = (got or {}).get("data") if isinstance(got, dict) else None
+            if not rec:
+                logger.warning("confirm_record %s: запись не прочитана", record_id)
+                return False
+            client = rec.get("client") or {}
+            services = [{"id": s.get("id"), "cost": s.get("cost", 0),
+                         "discount": s.get("discount", 0), "first_time": s.get("first_time", 0)}
+                        for s in (rec.get("services") or []) if s.get("id")]
+            payload = {
+                "staff_id": rec.get("staff_id") or (rec.get("staff") or {}).get("id"),
+                "services": services,
+                "client": ({"id": client.get("id")} if client.get("id")
+                           else {"phone": client.get("phone"), "name": client.get("name")}),
+                "datetime": rec.get("datetime"),
+                "seance_length": rec.get("seance_length") or rec.get("length"),
+                "save_if_busy": True,
+                "send_sms": False,
+                "comment": rec.get("comment") or "",
+                "attendance": config.YCLIENTS_CONFIRMED_ATTENDANCE,
+            }
+            put = await _request(session, "PUT", f"/record/{COMPANY_ID}/{record_id}", json=payload)
+            ok = bool(put and put.get("success"))
+            logger.info("YClients confirm_record %s -> %s (attendance=%s)",
+                        record_id, "OK" if ok else "FAIL", config.YCLIENTS_CONFIRMED_ATTENDANCE)
+            return ok
+        except Exception as e:
+            logger.warning("YClients confirm_record %s: %s", record_id, e)
+            return False
+
+
 async def get_records_in_range(session, start_date, end_date):
     """Записи компании за период (тот же формат, что и get_day_records)."""
     params = {

@@ -902,6 +902,13 @@ async def cb_reminder_answer(call: types.CallbackQuery):
         await _answer_with_scheme(call.message, confirm_text)
         await call.answer("✅ Подтверждено!")
         status_text = "✅ ПОДТВЕРДИЛ запись"
+        # Ставим статус «Подтвердил» на записи в YClients (best-effort, не ломает поток).
+        rid = parts[2] if len(parts) > 2 else None
+        if rid:
+            try:
+                await yclients.confirm_record(rid)
+            except Exception as e:
+                logger.warning("YClients confirm_record из ДА: %s", e)
     else:
         await call.answer("Понятно, оператор свяжется с вами.")
         status_text = "❌ НЕ подтвердил запись"
@@ -1060,35 +1067,56 @@ def _client_first_name(client, fallback="Уважаемый гость") -> str:
     return client.get("reg_first_name") or client.get("first_name") or fallback
 
 
-async def _send_due_reminders():
-    """Раз в час: берём записи на завтра из YCLIENTS и шлём напоминания
-    с кнопками «Подтвердить/Отменить». Каждая запись — один раз (дедуп по id)."""
+async def _send_due_confirmations():
+    """Подтверждение записи (ДА/НЕТ). Правило: уходит, как только наступило CONFIRM_FROM_HOUR
+    (10:00) дня ПЕРЕД приёмом и не тихие часы.
+      • запись заранее → в 10:00 накануне (окно 10–12);
+      • день-в-день или накануне после 12:00 → сразу (момент «10:00 накануне» уже прошёл).
+    Дедуп по record_id. Проверяется каждые 2 минуты (в _booking_loop) — поэтому день-в-день
+    подтверждение приходит почти сразу за «Вы записаны»."""
     if config.in_quiet_hours():
-        return   # тихие часы — отправим на следующем часовом проходе (в рабочее время)
-    tomorrow = (clinic_now() + timedelta(days=1)).date()
-    records = await yclients.get_appointments_for_date(tomorrow)
+        return
+    records = await yclients.get_future_records(days=90)
     if not records:
         return
+    now = datetime.now()
     sent = 0
     for rec in records:
         rid = rec.get("record_id")
         phone = rec.get("phone")
-        if not rid or not phone:
+        dt = rec.get("datetime")
+        if not rid or not phone or not dt:
             continue
         if db.yc_reminder_sent(rid):
             continue
+        if dt < now:
+            db.mark_yc_reminder_sent(rid)   # приём уже прошёл — не шлём и не копим
+            continue
+        # Момент, с которого можно слать: 10:00 дня ПЕРЕД приёмом.
+        send_from = (dt - timedelta(days=1)).replace(
+            hour=config.CONFIRM_FROM_HOUR, minute=0, second=0, microsecond=0)
+        if now < send_from:
+            continue   # ещё рано — ждём 10:00 накануне
         client = db.get_client_by_phone(phone)
         # Нет Telegram-аккаунта — не помечаем отправленным: вдруг клиент
-        # зарегистрируется до визита, тогда напомним в следующий час.
+        # зарегистрируется до визита, тогда подтвердим на следующем проходе.
         if not client or not client.get("tg_id") or client["tg_id"] <= 0:
             continue
         # Имя для обращения — ТОЛЬКО из бота (регистрация/Telegram), не из YClients.
         name = _client_first_name(client)
+        # «Сегодня/Завтра/дата» — чтобы день-в-день не писало «завтра».
+        if dt.date() == now.date():
+            when = "сегодня"
+        elif dt.date() == (now + timedelta(days=1)).date():
+            when = "завтра"
+        else:
+            when = dt.strftime("%d.%m")
         text = render_template("reminder", **{
             "ИМЯ":   name,
             "ФИО":   db.client_display_name(client),
-            "ДАТА":  rec["datetime"].strftime("%d.%m.%Y"),
-            "ВРЕМЯ": rec["datetime"].strftime("%H:%M"),
+            "КОГДА": when,
+            "ДАТА":  dt.strftime("%d.%m.%Y"),
+            "ВРЕМЯ": dt.strftime("%H:%M"),
             "ВРАЧ":  rec.get("master") or "нашему врачу-косметологу",
         })
         try:
@@ -1099,9 +1127,9 @@ async def _send_due_reminders():
             sent += 1
             await asyncio.sleep(0.1)
         except Exception as e:
-            logger.warning("reminder send failed (record %s): %s", rid, e)
+            logger.warning("confirmation send failed (record %s): %s", rid, e)
     if sent:
-        logger.info("📨 Напоминаний отправлено: %s", sent)
+        logger.info("📨 Запросов на подтверждение отправлено: %s", sent)
 
 
 async def _send_birthday_greetings():
@@ -1207,6 +1235,10 @@ async def _booking_loop():
             await _send_booking_notifications()
         except Exception as e:
             logger.warning("booking loop error: %s", e)
+        try:
+            await _send_due_confirmations()   # подтверждение (ДА/НЕТ) по правилу «10:00 накануне / сразу»
+        except Exception as e:
+            logger.warning("confirmations error: %s", e)
         await asyncio.sleep(120)
 
 
@@ -1244,10 +1276,8 @@ async def _scheduler_loop():
     """Фоновый цикл: раз в час проверяет напоминания, поздравления и чистит медиа."""
     await asyncio.sleep(15)  # дать боту подняться
     while True:
-        try:
-            await _send_due_reminders()
-        except Exception as e:
-            logger.warning("scheduler reminders error: %s", e)
+        # Подтверждения записи теперь в _booking_loop (каждые 2 мин, чтобы день-в-день
+        # приходило почти сразу). Здесь — только поздравления и чистка медиа.
         try:
             await _send_birthday_greetings()
         except Exception as e:

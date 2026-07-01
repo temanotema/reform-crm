@@ -58,6 +58,10 @@ YCLIENTS_USER_TOKEN    = os.getenv("YCLIENTS_USER_TOKEN", "")
 YCLIENTS_LOGIN         = os.getenv("YCLIENTS_LOGIN", "")
 YCLIENTS_PASSWORD      = os.getenv("YCLIENTS_PASSWORD", "")
 YCLIENTS_COMPANY_ID    = os.getenv("YCLIENTS_COMPANY_ID", "923489")
+# Значение поля attendance для статуса «Подтвердил» (по нажатию ДА в боте).
+# Определено по инспектору кнопки в UY YClients клиники: data-attendance="2" → «Подтвердил».
+# (в стандартной доке 2 иногда = «пришёл», поэтому обязательно проверить на тестовой записи!)
+YCLIENTS_CONFIRMED_ATTENDANCE = int(os.getenv("YCLIENTS_CONFIRMED_ATTENDANCE", "2"))
 
 # Порог суммы покупок для автоматического статуса VIP (в рублях).
 YCLIENTS_VIP_THRESHOLD = float(os.getenv("YCLIENTS_VIP_THRESHOLD", "200000"))
@@ -103,6 +107,10 @@ VAPID_CLAIM_EMAIL = os.getenv("VAPID_CLAIM_EMAIL", "mailto:re.form.cosmetology1@
 # Время — локальное на сервере (на проде это Europe/Moscow). Можно менять в config_local.py.
 QUIET_HOURS_START = int(os.getenv("QUIET_HOURS_START", "22"))   # с 22:00
 QUIET_HOURS_END   = int(os.getenv("QUIET_HOURS_END",   "10"))   # до 10:00
+
+# Подтверждение записи (ДА/НЕТ) уходит, как только наступило это время дня ПЕРЕД приёмом.
+# Заранее → в 10:00 накануне (окно 10–12); день-в-день/накануне после 12 → сразу.
+CONFIRM_FROM_HOUR = int(os.getenv("CONFIRM_FROM_HOUR", "10"))
 
 # ── Супер-админ панель /adm ───────────────────────────────────────────────────
 # 4-значный PIN для входа на /adm (вторая защита поверх логина супер-админа).
