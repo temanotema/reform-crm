@@ -938,8 +938,7 @@ tr:hover td{background:var(--hover)}
   input,textarea,select{font-size:16px}
   #rtxt,#srch{font-size:16px!important}
   .btn{padding:10px 16px}
-  .theme-fab{display:flex}
-  .notify-fab{display:flex}
+  /* Плавающие кнопки темы/уведомлений убраны — теперь они в левой панели (она прокручивается) */
   .scroll-page{padding:16px;-webkit-overflow-scrolling:touch}
   /* (1) Подвал сайдбара: приподнять над нижней панелью, чтобы кнопки не срезались */
   .sidebar-foot{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
