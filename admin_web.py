@@ -944,17 +944,20 @@ tr:hover td{background:var(--hover)}
   .sidebar-foot{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
   /* (2) Кнопка «вниз» в чате — выше панели быстрых ответов, чтобы не наезжала */
   .scroll-fab{bottom:158px}
-  /* (3) Вкладка «Клиенты»: таблица → карточки */
+  /* (3) Вкладка «Клиенты»: таблица → карточки. Строка = flex: инфо слева (2 строки),
+     категория/статус справа по центру. */
   .cli-tbl{min-width:0;width:100%}
   .cli-tbl thead{display:none}
-  .cli-tbl,.cli-tbl tbody,.cli-tbl tr,.cli-tbl td{display:block;width:auto}
-  .cli-tbl tr{border:1px solid var(--border);border-radius:14px;margin-bottom:10px;
-    padding:11px 13px;background:var(--card)}
-  .cli-tbl td{border:none!important;padding:3px 0;white-space:normal}
-  .cli-tbl td.col-hide-m{display:none}
-  .cli-tbl td .av{display:none}                 /* без букв-аватара, как в YClients */
-  .cli-tbl tr{cursor:pointer}
-  .cli-tbl td[data-actions]{display:none}   /* кнопки — в модалке по тапу, в карточке не дублируем */
+  .cli-tbl,.cli-tbl tbody{display:block;width:auto}
+  .cli-tbl tr{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    border:1px solid var(--border);border-radius:14px;margin-bottom:10px;
+    padding:11px 13px;background:var(--card);cursor:pointer}
+  .cli-tbl td{display:block;border:none!important;padding:0;white-space:normal}
+  .cli-tbl td:first-child{flex:1;min-width:0}          /* инфо клиента, тянется на всю ширину */
+  .cli-tbl td.col-hide-m,.cli-tbl td[data-actions]{display:none}
+  .cli-tbl td .av{display:none}                        /* без букв-аватара, как в YClients */
+  .cli-tbl td:nth-child(5){flex-shrink:0;max-width:42%}/* колонка категорий/статуса — справа */
+  .cli-tbl td:nth-child(5) > div{justify-content:flex-end;align-items:center}
 }
 @media(min-width:768px){
   .back-btn{display:none!important}
