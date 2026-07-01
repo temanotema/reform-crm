@@ -3435,7 +3435,7 @@ CHAT_TEMPLATES_TPL = """
       </thead>
       <tbody id="templatesList">
       {% for t in templates %}
-      <tr id="tplRow{{t.id}}" style="cursor:pointer" onclick="editTemplate({{t.id}}, '{{t.name|e}}', '{{t.text|e}}')">
+      <tr id="tplRow{{t.id}}" style="cursor:pointer" data-id="{{t.id}}" data-tname="{{t.name|e}}" data-ttext="{{t.text|e}}" onclick="editTemplate(this)">
         <td style="font-weight:600;white-space:nowrap">{{ t.name }}</td>
         <td class="tpl-text" style="max-width:460px;color:var(--text-sec);white-space:pre-wrap">{{ t.text[:120] }}{% if t.text|length > 120 %}…{% endif %}</td>
       </tr>
@@ -3494,10 +3494,10 @@ function newTemplate() {
     openModal('addTemplateModal');
 }
 
-function editTemplate(id, name, text) {
-    document.getElementById('editTemplateId').value = id;
-    document.getElementById('templateName').value = name;
-    document.getElementById('templateText').value = text;
+function editTemplate(el) {
+    document.getElementById('editTemplateId').value = el.getAttribute('data-id') || '';
+    document.getElementById('templateName').value = el.getAttribute('data-tname') || '';
+    document.getElementById('templateText').value = el.getAttribute('data-ttext') || '';
     document.getElementById('templateModalTitle').innerText = 'Редактировать шаблон';
     document.getElementById('tplDeleteBtn').style.display = '';
     openModal('addTemplateModal');
