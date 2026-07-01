@@ -3450,20 +3450,31 @@ def api_send(client_id):
         media_type = _media_kind(raw_name, uploaded.mimetype)
         display_text = text or {"photo": "📷 Фото", "video": "🎬 Видео", "document": f"📎 {raw_name}"}[media_type]
         tg_id = client.get("tg_id")
-        warning = None
         if tg_id and tg_id > 0:
             try:
                 _send_tg_media(tg_id, media_type, local_path, caption=text, filename=raw_name)
             except Exception as e:
-                warning = str(e)
-        else:
-            warning = "У клиента нет Telegram — сохранено только в CRM"
+                # Не дошло до Telegram — НЕ сохраняем в чат (иначе «в чате есть, а клиенту нет»),
+                # и убираем осиротевший файл.
+                app.logger.warning("api_send media fail (client %s): %s", client_id, e)
+                try:
+                    os.remove(local_path)
+                except OSError:
+                    pass
+                return jsonify({"ok": False, "error": "Не отправлено — Telegram недоступен. Попробуйте ещё раз."})
+            db.save_message(
+                client_id, "out", display_text,
+                media_type=media_type, media_filename=raw_name,
+                media_local_path=unique_name, sent_by=session.get("admin_name"),
+            )
+            return jsonify({"ok": True})
+        # У клиента нет Telegram — осознанно сохраняем только в CRM
         db.save_message(
             client_id, "out", display_text,
             media_type=media_type, media_filename=raw_name,
             media_local_path=unique_name, sent_by=session.get("admin_name"),
         )
-        return jsonify({"ok": True, "warning": warning})
+        return jsonify({"ok": True, "warning": "У клиента нет Telegram — сохранено только в CRM"})
 
     data = request.json or {}
     text = (data.get("text") or "").strip()
@@ -3471,17 +3482,18 @@ def api_send(client_id):
         return jsonify({"ok": False, "error": "empty"})
 
     tg_id = client.get("tg_id")
-    warning = None
     if tg_id and tg_id > 0:
         try:
             _send_tg(tg_id, text)
         except Exception as e:
-            warning = str(e)
-    else:
-        warning = "У клиента нет Telegram — сохранено только в CRM"
-
+            # Не дошло до Telegram — НЕ сохраняем в чат, чтобы не было «в чате есть, а клиенту нет».
+            app.logger.warning("api_send tg fail (client %s): %s", client_id, e)
+            return jsonify({"ok": False, "error": "Не отправлено — Telegram недоступен. Попробуйте ещё раз."})
+        db.save_message(client_id, "out", text, sent_by=session.get("admin_name"))
+        return jsonify({"ok": True})
+    # У клиента нет Telegram — осознанно сохраняем только в CRM
     db.save_message(client_id, "out", text, sent_by=session.get("admin_name"))
-    return jsonify({"ok": True, "warning": warning})
+    return jsonify({"ok": True, "warning": "У клиента нет Telegram — сохранено только в CRM"})
 
 
 @app.route("/api/dialogs")
