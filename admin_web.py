@@ -936,6 +936,19 @@ tr:hover td{background:var(--hover)}
   .theme-fab{display:flex}
   .notify-fab{display:flex}
   .scroll-page{padding:16px;-webkit-overflow-scrolling:touch}
+  /* (1) Подвал сайдбара: приподнять над нижней панелью, чтобы кнопки не срезались */
+  .sidebar-foot{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
+  /* (2) Кнопка «вниз» в чате — выше панели быстрых ответов, чтобы не наезжала */
+  .scroll-fab{bottom:158px}
+  /* (3) Вкладка «Клиенты»: таблица → карточки */
+  .cli-tbl{min-width:0;width:100%}
+  .cli-tbl thead{display:none}
+  .cli-tbl,.cli-tbl tbody,.cli-tbl tr,.cli-tbl td{display:block;width:auto}
+  .cli-tbl tr{border:1px solid var(--border);border-radius:14px;margin-bottom:10px;
+    padding:11px 13px;background:var(--card)}
+  .cli-tbl td{border:none!important;padding:3px 0;white-space:normal}
+  .cli-tbl td.col-hide-m{display:none}
+  .cli-tbl td .av{width:36px!important;height:36px!important;font-size:13px!important}
 }
 @media(min-width:768px){
   .back-btn{display:none!important}
@@ -2703,7 +2716,7 @@ CLIENTS_TPL = """
   </div>
 
   <div class="tbl-wrap">
-    <table>
+    <table class="cli-tbl">
       <thead>
         <tr>
           <th>Клиент</th><th>Телефон</th><th>Дата рождения</th><th>Потрачено</th><th>Категории</th><th>Зарегистрирован</th><th>Действия</th>
@@ -2724,8 +2737,8 @@ CLIENTS_TPL = """
           </div>
         </td>
         <td style="white-space:nowrap">{{c.phone or '—'}}</td>
-        <td class="bd-cell" data-client="{{c.id}}" style="color:var(--muted);font-size:12px;white-space:nowrap">{{ c.birth_date.strftime('%d.%m.%Y') if c.birth_date else '—' }}</td>
-        <td class="spent-cell" data-client="{{c.id}}" data-phone="{{c.phone or ''}}" style="white-space:nowrap;font-size:13px">{% if c.phone %}<span style="color:var(--muted)">…</span>{% else %}—{% endif %}</td>
+        <td class="bd-cell col-hide-m" data-client="{{c.id}}" style="color:var(--muted);font-size:12px;white-space:nowrap">{{ c.birth_date.strftime('%d.%m.%Y') if c.birth_date else '—' }}</td>
+        <td class="spent-cell col-hide-m" data-client="{{c.id}}" data-phone="{{c.phone or ''}}" style="white-space:nowrap;font-size:13px">{% if c.phone %}<span style="color:var(--muted)">…</span>{% else %}—{% endif %}</td>
         <td>
           <div style="display:flex;flex-wrap:wrap;gap:2px">
             <span class="vip-tag" data-client="{{c.id}}" style="display:none"></span>
@@ -2734,7 +2747,7 @@ CLIENTS_TPL = """
             {% endfor %}
           </div>
         </td>
-        <td style="color:var(--muted);font-size:12px;white-space:nowrap">{{c.created_at.strftime('%d.%m.%Y') if c.created_at else '—'}}</td>
+        <td class="col-hide-m" style="color:var(--muted);font-size:12px;white-space:nowrap">{{c.created_at.strftime('%d.%m.%Y') if c.created_at else '—'}}</td>
         <td>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn-sm" onclick="editClient({{c.id}},'{{(c.reg_first_name or c.first_name)|e}}','{{(c.reg_last_name or c.last_name)|e}}','{{(c.reg_patronymic or c.patronymic)|e}}','{{c.phone|e}}','{{c.notes|e}}')"><i class="ti ti-edit"></i></button>
