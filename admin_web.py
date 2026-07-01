@@ -942,8 +942,10 @@ tr:hover td{background:var(--hover)}
   .scroll-page{padding:16px;-webkit-overflow-scrolling:touch}
   /* (1) Подвал сайдбара: приподнять над нижней панелью, чтобы кнопки не срезались */
   .sidebar-foot{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
-  /* (2) Кнопка «вниз» в чате — выше панели быстрых ответов, чтобы не наезжала */
-  .scroll-fab{bottom:158px}
+  /* (1b) Эмодзи-кнопку в чате на телефоне убираем — там своя клавиатура с эмодзи */
+  .emoji-btn{display:none}
+  .emoji-panel{display:none!important}
+  /* (2) Позицию кнопки «вниз» задаёт JS (positionScrollFab) — всегда над быстрыми ответами */
   /* (3) Вкладка «Клиенты»: таблица → карточки. Строка = flex: инфо слева (2 строки),
      категория/статус справа по центру. */
   .cli-tbl{min-width:0;width:100%}
@@ -1848,7 +1850,7 @@ CHATS_TPL = """
         <div class="emoji-panel" id="emojiPanel"></div>
         <div class="chat-inp">
           <input type="file" id="fileInput" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.txt,.csv" multiple>
-          <button class="btn-icon" type="button" onclick="toggleEmoji()" title="Эмодзи">
+          <button class="btn-icon emoji-btn" type="button" onclick="toggleEmoji()" title="Эмодзи">
             <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
           </button>
           <button class="btn-icon" type="button" onclick="document.getElementById('fileInput').click()" title="Прикрепить файл">
@@ -1911,6 +1913,7 @@ var pollTimer = null;
 function autoGrow(el){
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  positionScrollFab();   // поле выросло — сдвинуть кнопку «вниз»
 }
 
 function initMsgState(){
@@ -2031,6 +2034,7 @@ async function loadChat(id){
     insertDateSeparators(box);
     scrollMsgsBottom(box);
     updateScrollFab();
+    positionScrollFab();
     // сбрасываем поиск по переписке при переходе в другой диалог
     var csb = document.getElementById('chatSearchBar'); if(csb) csb.style.display = 'none';
     var cs = document.getElementById('chatSrch'); if(cs) cs.value = '';
@@ -2277,6 +2281,18 @@ function updateScrollFab(){
   var far = (box.scrollHeight - box.scrollTop - box.clientHeight) > 240;
   fab.classList.toggle('show', far);
 }
+// Кнопка «вниз» всегда над панелью быстрых ответов: считаем её высоту + высоту поля ввода.
+function positionScrollFab(){
+  var fab = document.getElementById('scrollFab');
+  if(!fab) return;
+  var qt = document.getElementById('quickTemplates');
+  var compose = document.querySelector('.chat-compose');
+  var h = 12;
+  if(compose && compose.offsetParent !== null) h += compose.offsetHeight;
+  if(qt && qt.offsetParent !== null) h += qt.offsetHeight;
+  fab.style.bottom = h + 'px';
+}
+window.addEventListener('resize', positionScrollFab);
 
 // Меню «три точки» в шапке (наведение/клик) + обои чата
 function toggleHdrMenu(e){
@@ -2554,6 +2570,7 @@ async function loadQuickTemplates() {
             };
             container.appendChild(btn);
         }
+        positionScrollFab();   // подвинуть кнопку «вниз» над обновлённой панелью быстрых ответов
     } catch(e) { console.warn(e); }
 }
 
