@@ -910,7 +910,7 @@ tr:hover td{background:var(--hover)}
 
 /* ── Responsive ── */
 @media(max-width:767px){
-  .sidebar{transform:translateX(-100%)}
+  .sidebar{transform:translateX(-100%);height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .sidebar.mob-open{transform:translateX(0)}
   .hamburger{display:block}
   .main{margin-left:0;padding-top:calc(52px + env(safe-area-inset-top));padding-bottom:60px;height:100dvh}
