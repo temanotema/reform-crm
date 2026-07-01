@@ -2994,6 +2994,7 @@ function searchClients(v){
 // Тап по карточке клиента → модалка со всеми данными (в т.ч. скрытыми на мобилке).
 var _cdTr = null;
 function openClientDetails(tr){
+  if(window.innerWidth >= 768) return;   // только на мобильной версии; на десктопе таблица и так всё показывает
   _cdTr = tr;
   var g = function(k){ return tr.getAttribute(k) || ''; };
   var nmEl = tr.querySelector('.cname-link');
