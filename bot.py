@@ -887,14 +887,18 @@ async def cb_reminder_answer(call: types.CallbackQuery):
     confirm_text = None
 
     if answer == "yes":
-        # Первичный или повторный приём — по данным YClients (есть ли прошлые визиты).
+        # Первичный или повторный приём — по РЕАЛЬНЫМ прошедшим визитам YClients.
+        # (не по visits/first_visit из карточки: у новичка с будущей бронью они уже
+        #  бывают заполнены → его ошибочно считало повторником).
         phone = client.get("phone") if client else None
         is_repeat = False
         if phone:
             try:
                 summary = await yclients.get_profile_summary(phone)
-                if summary and (summary.get("visits") or summary.get("first_visit")):
-                    is_repeat = True
+                if summary:
+                    is_repeat = bool(summary.get(
+                        "has_past_visit",
+                        summary.get("visits") or summary.get("first_visit")))
             except Exception as e:
                 logger.warning("YClients при подтверждении записи: %s", e)
         confirm_text = render_template(
@@ -1223,7 +1227,7 @@ async def _send_booking_notifications():
         db.set_setting("booking_notify_seeded", True)
         logger.info("Уведомления о записи: первичная инициализация выполнена (без рассылки).")
     elif sent:
-        logger.info("📨 Подтверждений записи отправлено: %s", sent)
+        logger.info("📨 Уведомлений «Вы записаны» отправлено: %s", sent)
 
 
 async def _booking_loop():

@@ -538,6 +538,10 @@ async def _build_summary(session, phone: str):
         "name":        _first("name", "display_name", "fullname", default="") or "",
         "phone":       _first("phone", default=_digits(phone)),
         "visits":      int(_to_float(_first("visits", "visit_count", "visits_count", default=0))),
+        # Был ли РЕАЛЬНЫЙ прошедший визит (строго по записям с датой в прошлом).
+        # Надёжнее полей карточки: у нового клиента с будущей бронью visits/first_visit
+        # уже могут быть заполнены, а прошедших визитов нет.
+        "has_past_visit": bool(first_visit_dt or last_visit_dt),
         "last_visit":  last_visit,
         "first_visit": first_visit,
         "birth_date":  _parse_date(_first("birth_date", "birthday")),
