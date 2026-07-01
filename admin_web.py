@@ -955,7 +955,7 @@ tr:hover td{background:var(--hover)}
   .cli-tbl td.col-hide-m{display:none}
   .cli-tbl td .av{display:none}                 /* без букв-аватара, как в YClients */
   .cli-tbl tr{cursor:pointer}
-  .cli-tbl td[data-actions]{display:flex;gap:8px;margin-top:8px}
+  .cli-tbl td[data-actions]{display:none}   /* кнопки — в модалке по тапу, в карточке не дублируем */
 }
 @media(min-width:768px){
   .back-btn{display:none!important}
@@ -2744,7 +2744,7 @@ CLIENTS_TPL = """
           <div style="display:flex;align-items:center;gap:10px">
             <div class="av" style="width:32px;height:32px;font-size:12px;flex-shrink:0">{{(c.first_name or c.last_name or '?')[0]|upper}}</div>
             <div>
-              <a id="cname{{c.id}}" class="cname-link" title="ФИО из YClients (по номеру)" style="font-weight:600;text-decoration:none;color:var(--text);cursor:pointer">{{ display_name(c) }}</a>
+              <a id="cname{{c.id}}" class="cname-link" title="ФИО из YClients (по номеру)" style="font-weight:600;text-decoration:none;color:var(--text);cursor:pointer">{{ display_name(c) }}</a><span class="cli-botname" id="botname{{c.id}}" data-bn="{{ display_name(c)|e }}" style="display:none;font-size:12px;color:var(--muted);font-weight:400"> ({{ display_name(c)|e }})</span>
               <div style="font-size:11px;color:var(--muted)" title="Введено клиентом в боте">
                 {% if c.username %}@{{c.username}} · {% endif %}{{ c.phone or '' }}
               </div>
@@ -2905,9 +2905,10 @@ function ycApply(id, data){
       vip.style.display = '';
     }
   }
-  // Сверху — ФИО из YClients (по номеру), для сверки с тем, что клиент ввёл в боте.
-  if(nameEl && data && data.found){
-    if(data.name){ nameEl.textContent = data.name; }
+  // Главное — ФИО из YClients (по номеру); рядом в скобках — что клиент указал в боте.
+  var bn = document.getElementById('botname' + id);
+  if(nameEl && data && data.found && data.name){
+    nameEl.textContent = data.name;
     if(data.url){
       nameEl.href = data.url;
       nameEl.target = '_blank';
@@ -2916,6 +2917,12 @@ function ycApply(id, data){
       nameEl.style.color = 'var(--accent)';
       nameEl.style.cursor = 'pointer';
     }
+    if(bn){
+      var botName = (bn.getAttribute('data-bn') || '').trim();
+      bn.style.display = (botName && botName !== data.name.trim()) ? '' : 'none';
+    }
+  } else if(bn){
+    bn.style.display = 'none';   // в YClients не найден — главное и так ботовское имя
   }
 }
 
@@ -2989,7 +2996,8 @@ var _cdTr = null;
 function openClientDetails(tr){
   _cdTr = tr;
   var g = function(k){ return tr.getAttribute(k) || ''; };
-  document.getElementById('cdName').textContent = g('data-name') || 'Клиент';
+  var nmEl = tr.querySelector('.cname-link');
+  document.getElementById('cdName').textContent = (nmEl && nmEl.textContent.trim()) || g('data-name') || 'Клиент';
   var spentEl = tr.querySelector('.spent-cell');
   var spent = spentEl ? spentEl.textContent.trim() : '';
   if(spent === '…' || spent === '') spent = '—';
