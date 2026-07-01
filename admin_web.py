@@ -958,6 +958,15 @@ tr:hover td{background:var(--hover)}
   .cli-tbl td .av{display:none}                        /* без букв-аватара, как в YClients */
   .cli-tbl td:nth-child(5){flex-shrink:0;max-width:42%}/* колонка категорий/статуса — справа */
   .cli-tbl td:nth-child(5) > div{justify-content:flex-end;align-items:center}
+  /* Быстрые ответы: таблица → карточки (тап = редактировать) */
+  .tpl-tbl{min-width:0;width:100%}
+  .tpl-tbl thead{display:none}
+  .tpl-tbl,.tpl-tbl tbody{display:block;width:auto}
+  .tpl-tbl tr{display:block;border:1px solid var(--border);border-radius:14px;
+    margin-bottom:10px;padding:11px 13px;background:var(--card);cursor:pointer}
+  .tpl-tbl td{display:block;border:none!important;padding:0;white-space:normal}
+  .tpl-tbl td:first-child{font-size:15px;margin-bottom:4px;white-space:normal!important}
+  .tpl-tbl .tpl-text{font-size:13px;max-width:none!important}
 }
 @media(min-width:768px){
   .back-btn{display:none!important}
@@ -3410,30 +3419,25 @@ CHAT_TEMPLATES_TPL = """
 <div class="scroll-page">
   <div class="page-hdr">
     <h2><i class="ti ti-bolt"></i> Быстрые ответы (шаблоны для чата)</h2>
-    <button class="btn btn-primary" onclick="openModal('addTemplateModal')">+ Добавить шаблон</button>
+    <button class="btn btn-primary" onclick="newTemplate()">+ Добавить шаблон</button>
   </div>
   <p style="color:var(--text-sec); margin-bottom:20px; font-size:13px;">
     Шаблоны появятся в виде кнопок над полем ввода в чате. При нажатии текст подставляется в поле – вы можете его отредактировать и отправить.
   </p>
 
   <div class="tbl-wrap">
-    <table>
+    <table class="tpl-tbl">
       <thead>
         <tr>
           <th>Название</th>
           <th>Текст</th>
-          <th>Действия</th>
         </tr>
       </thead>
       <tbody id="templatesList">
       {% for t in templates %}
-      <tr id="tplRow{{t.id}}">
-        <td style="font-weight:600;">{{ t.name }}</td>
-        <td style="max-width:400px; white-space:pre-wrap;">{{ t.text[:100] }}{% if t.text|length > 100 %}…{% endif %}</td>
-        <td>
-          <button class="btn-sm" onclick="editTemplate({{t.id}}, '{{t.name|e}}', '{{t.text|e}}')"><i class="ti ti-edit"></i></button>
-          <button class="btn-sm btn-danger" onclick="deleteTemplate({{t.id}})"><i class="ti ti-trash"></i></button>
-        </td>
+      <tr id="tplRow{{t.id}}" style="cursor:pointer" onclick="editTemplate({{t.id}}, '{{t.name|e}}', '{{t.text|e}}')">
+        <td style="font-weight:600;white-space:nowrap">{{ t.name }}</td>
+        <td class="tpl-text" style="max-width:460px;color:var(--text-sec);white-space:pre-wrap">{{ t.text[:120] }}{% if t.text|length > 120 %}…{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>
@@ -3451,7 +3455,10 @@ CHAT_TEMPLATES_TPL = """
     <input type="hidden" id="editTemplateId">
     <div class="form-row"><label>Название (будет на кнопке)</label><input id="templateName" placeholder="Например: ПРИВЕТ"></div>
     <div class="form-row"><label>Текст сообщения</label><textarea id="templateText" rows="5" placeholder="Ваш текст…"></textarea></div>
-    <button class="btn btn-primary" style="width:100%; justify-content:center" onclick="saveTemplate()">Сохранить</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="saveTemplate()">Сохранить</button>
+      <button id="tplDeleteBtn" class="btn btn-danger" style="display:none;justify-content:center" onclick="deleteTemplateFromModal()"><i class="ti ti-trash"></i> Удалить</button>
+    </div>
   </div>
 </div>
 
@@ -3478,12 +3485,29 @@ async function saveTemplate() {
     }
 }
 
+function newTemplate() {
+    document.getElementById('editTemplateId').value = '';
+    document.getElementById('templateName').value = '';
+    document.getElementById('templateText').value = '';
+    document.getElementById('templateModalTitle').innerText = 'Добавить шаблон';
+    document.getElementById('tplDeleteBtn').style.display = 'none';
+    openModal('addTemplateModal');
+}
+
 function editTemplate(id, name, text) {
     document.getElementById('editTemplateId').value = id;
     document.getElementById('templateName').value = name;
     document.getElementById('templateText').value = text;
     document.getElementById('templateModalTitle').innerText = 'Редактировать шаблон';
+    document.getElementById('tplDeleteBtn').style.display = '';
     openModal('addTemplateModal');
+}
+
+async function deleteTemplateFromModal() {
+    var id = document.getElementById('editTemplateId').value;
+    if (!id) return;
+    await deleteTemplate(id);
+    closeModal('addTemplateModal');
 }
 
 async function deleteTemplate(id) {
