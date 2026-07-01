@@ -402,33 +402,44 @@ async def confirm_record(record_id):
 
 
 async def get_records_in_range(session, start_date, end_date):
-    """Записи компании за период (тот же формат, что и get_day_records)."""
-    params = {
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "count": 1000,
-        "page": 1,
-    }
-    data = await _request(session, "GET", f"/records/{COMPANY_ID}", params=params)
-    if not data or not data.get("success"):
-        return None
+    """Записи компании за период (тот же формат, что и get_day_records).
+    Тянем ВСЕ страницы: у клиники бывает >1000 будущих записей (много «Очереди»),
+    и при выборке только первой 1000 ближайшие записи не попадают → бот их не видит."""
+    PER = 1000
+    MAX_PAGES = 25   # предохранитель (до 25000 записей)
     out = []
-    for rec in (data.get("data") or []):
-        if rec.get("deleted"):
-            continue
-        dt = _parse_dt(rec.get("datetime") or rec.get("date"))
-        if not dt:
-            continue
-        client = rec.get("client") or {}
-        staff = rec.get("staff") or {}
-        master = staff.get("name") or rec.get("staff_name") or ""
-        out.append({
-            "record_id":   rec.get("id"),
-            "datetime":    dt,
-            "phone":       client.get("phone") or "",
-            "client_name": client.get("name") or "",
-            "master":      master,
-        })
+    page = 1
+    while page <= MAX_PAGES:
+        params = {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "count": PER,
+            "page": page,
+        }
+        data = await _request(session, "GET", f"/records/{COMPANY_ID}", params=params)
+        if not data or not data.get("success"):
+            # ошибка на первой странице — считаем сбоем; на последующих — отдаём что есть
+            return out if out else None
+        chunk = data.get("data") or []
+        for rec in chunk:
+            if rec.get("deleted"):
+                continue
+            dt = _parse_dt(rec.get("datetime") or rec.get("date"))
+            if not dt:
+                continue
+            client = rec.get("client") or {}
+            staff = rec.get("staff") or {}
+            master = staff.get("name") or rec.get("staff_name") or ""
+            out.append({
+                "record_id":   rec.get("id"),
+                "datetime":    dt,
+                "phone":       client.get("phone") or "",
+                "client_name": client.get("name") or "",
+                "master":      master,
+            })
+        if len(chunk) < PER:
+            break   # последняя страница
+        page += 1
     return out
 
 
